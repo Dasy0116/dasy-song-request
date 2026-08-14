@@ -5,7 +5,6 @@ import { FilterBar } from "@/components/FilterBar";
 import { SongTable } from "@/components/SongTable";
 import { SongCard } from "@/components/SongCard";
 import { RequestModal } from "@/components/RequestModal";
-import { FooterLinks } from "@/components/FooterLinks";
 import { SuccessToast } from "@/components/SuccessToast";
 import { useSongStore } from "@/store/useSongStore";
 
@@ -44,8 +43,6 @@ export default function Home() {
         <div className="md:hidden">
           <SongCard />
         </div>
-
-        <FooterLinks />
       </div>
 
       {/* 弹窗 & Toast */}

@@ -1,3 +1,8 @@
+# Deployment scripts (local use only)
+serve-tunnel.mjs
+netlify-drop.mjs
+test-page.html
+
 # Logs
 logs
 *.log

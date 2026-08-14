@@ -47,9 +47,18 @@ export function useSongFilter(): {
     });
   }, [allSongs, firstLetter, language, genre, condition, searchKeyword]);
 
+  const sortedSongs = useMemo(() => {
+    return [...filteredSongs].sort((a, b) => {
+      const la = a.firstLetter || "~";
+      const lb = b.firstLetter || "~";
+      if (la === lb) return a.title.localeCompare(b.title, "zh");
+      return la.localeCompare(lb, "zh");
+    });
+  }, [filteredSongs]);
+
   return {
-    filteredSongs,
-    totalCount: filteredSongs.length,
-    isEmpty: filteredSongs.length === 0,
+    filteredSongs: sortedSongs,
+    totalCount: sortedSongs.length,
+    isEmpty: sortedSongs.length === 0,
   };
 }
