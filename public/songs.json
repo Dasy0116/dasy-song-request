@@ -924,18 +924,6 @@
     "status": "available"
   },
   {
-    "id": 77,
-    "title": "句号",
-    "artist": "G.E.M. 邓紫棋",
-    "language": "国语",
-    "genre": "流行",
-    "firstLetter": "J",
-    "isPaid": false,
-    "hasClip": false,
-    "remark": "-",
-    "status": "available"
-  },
-  {
     "id": 78,
     "title": "大眠",
     "artist": "王心凌",
@@ -1206,6 +1194,18 @@
     "language": "日语",
     "genre": "术曲",
     "firstLetter": "A",
+    "isPaid": false,
+    "hasClip": false,
+    "remark": "-",
+    "status": "available"
+  },
+  {
+    "id": 101,
+    "title": "句号",
+    "artist": "G.E.M. 邓紫棋",
+    "language": "国语",
+    "genre": "流行",
+    "firstLetter": "J",
     "isPaid": false,
     "hasClip": false,
     "remark": "-",

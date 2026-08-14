@@ -60,7 +60,7 @@ export function AvatarHero() {
           擅长 ACG · 术曲 · JPOP
         </span>
         <span className="chip bg-accent-gold/20 text-accent-gold border border-accent-gold/30">
-          民谣 · 流行
+          苦情歌 · 流行
         </span>
       </p>
 
