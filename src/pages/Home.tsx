@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { StarBackground } from "@/components/StarBackground";
 import { AvatarHero } from "@/components/AvatarHero";
 import { FilterBar } from "@/components/FilterBar";
@@ -6,8 +7,15 @@ import { SongCard } from "@/components/SongCard";
 import { RequestModal } from "@/components/RequestModal";
 import { FooterLinks } from "@/components/FooterLinks";
 import { SuccessToast } from "@/components/SuccessToast";
+import { useSongStore } from "@/store/useSongStore";
 
 export default function Home() {
+  const fetchSongs = useSongStore((s) => s.fetchSongs);
+
+  useEffect(() => {
+    fetchSongs();
+  }, [fetchSongs]);
+
   return (
     <div className="relative min-h-screen overflow-x-hidden">
       {/* 星空背景 */}

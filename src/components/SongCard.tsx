@@ -11,6 +11,9 @@ import {
   Send,
   ExternalLink,
   Inbox,
+  Loader2,
+  AlertCircle,
+  RotateCw,
 } from "lucide-react";
 
 const statusText: Record<Song["status"], string> = {
@@ -128,6 +131,31 @@ function MobileSongCard({ song, index }: CardProps) {
 
 export function SongCard() {
   const { filteredSongs, isEmpty } = useSongFilter();
+  const isLoading = useSongStore((s) => s.isLoading);
+  const loadError = useSongStore((s) => s.loadError);
+  const fetchSongs = useSongStore((s) => s.fetchSongs);
+
+  if (isLoading) {
+    return (
+      <div className="glass-card py-16 flex flex-col items-center justify-center text-white/50">
+        <Loader2 className="w-10 h-10 mb-3 text-accent-violet animate-spin" />
+        <p className="text-base">正在加载歌单...</p>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="glass-card py-16 flex flex-col items-center justify-center text-white/50">
+        <AlertCircle className="w-10 h-10 mb-3 text-red-400/70" />
+        <p className="text-base mb-3">{loadError}</p>
+        <button onClick={() => fetchSongs()} className="btn-secondary">
+          <RotateCw className="w-4 h-4" />
+          重新加载
+        </button>
+      </div>
+    );
+  }
 
   if (isEmpty) {
     return (

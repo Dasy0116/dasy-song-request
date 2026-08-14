@@ -1,11 +1,13 @@
 import { create } from "zustand";
 import type { Song, SongRequest, FilterKey, FilterState } from "@/types";
-import { songs } from "@/data/songs";
 
 interface SongStore extends FilterState {
   // 歌曲数据
   allSongs: Song[];
   highlightedSongId: number | null;
+  // 加载状态
+  isLoading: boolean;
+  loadError: string | null;
   // 弹窗状态
   isRequestModalOpen: boolean;
   selectedSong: Song | null;
@@ -15,6 +17,7 @@ interface SongStore extends FilterState {
   successToast: string | null;
 
   // Actions
+  fetchSongs: () => Promise<void>;
   setFilter: <K extends FilterKey>(key: K, value: FilterState[K]) => void;
   resetFilters: () => void;
   setHighlighted: (id: number | null) => void;
@@ -33,9 +36,13 @@ export const useSongStore = create<SongStore>((set, get) => ({
   condition: "全部",
   searchKeyword: "",
 
-  // 歌曲数据
-  allSongs: songs,
+  // 歌曲数据（初始为空，异步加载）
+  allSongs: [],
   highlightedSongId: null,
+
+  // 加载状态
+  isLoading: false,
+  loadError: null,
 
   // 弹窗
   isRequestModalOpen: false,
@@ -46,6 +53,23 @@ export const useSongStore = create<SongStore>((set, get) => ({
 
   // Toast
   successToast: null,
+
+  fetchSongs: async () => {
+    set({ isLoading: true, loadError: null });
+    try {
+      // 加时间戳防止缓存，确保每次拿到最新歌单
+      const url = `./songs.json?t=${Date.now()}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data: Song[] = await res.json();
+      set({ allSongs: data, isLoading: false, loadError: null });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "未知错误";
+      set({ isLoading: false, loadError: `歌单加载失败: ${msg}` });
+    }
+  },
 
   setFilter: (key, value) => set({ [key]: value } as Pick<SongStore, FilterKey>),
 

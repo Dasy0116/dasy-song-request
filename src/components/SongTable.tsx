@@ -1,7 +1,7 @@
 import { useSongFilter } from "@/hooks/useSongFilter";
 import { useSongStore } from "@/store/useSongStore";
 import type { Song } from "@/types";
-import { Music2, ExternalLink, Send, Inbox } from "lucide-react";
+import { Music2, ExternalLink, Send, Inbox, Loader2, AlertCircle, RotateCw } from "lucide-react";
 
 const statusText: Record<Song["status"], string> = {
   available: "可点",
@@ -118,6 +118,10 @@ function SongRow({ song, index }: SongRowProps) {
 
 export function SongTable() {
   const { filteredSongs, isEmpty } = useSongFilter();
+  const isLoading = useSongStore((s) => s.isLoading);
+  const loadError = useSongStore((s) => s.loadError);
+  const allSongs = useSongStore((s) => s.allSongs);
+  const fetchSongs = useSongStore((s) => s.fetchSongs);
 
   return (
     <section
@@ -126,7 +130,25 @@ export function SongTable() {
     >
       <div className="glass-card overflow-hidden">
         <div className="overflow-x-auto max-h-[70vh]">
-          {isEmpty ? (
+          {isLoading ? (
+            <div className="py-20 flex flex-col items-center justify-center text-white/50">
+              <Loader2 className="w-12 h-12 mb-4 text-accent-violet animate-spin" />
+              <p className="text-lg mb-1">正在加载歌单...</p>
+              <p className="text-sm text-white/40">🐺 独狼正在翻箱倒柜找歌呢</p>
+            </div>
+          ) : loadError ? (
+            <div className="py-20 flex flex-col items-center justify-center text-white/50">
+              <AlertCircle className="w-12 h-12 mb-4 text-red-400/70" />
+              <p className="text-lg mb-1">{loadError}</p>
+              <button
+                onClick={() => fetchSongs()}
+                className="btn-secondary mt-4"
+              >
+                <RotateCw className="w-4 h-4" />
+                重新加载
+              </button>
+            </div>
+          ) : isEmpty ? (
             <div className="py-20 flex flex-col items-center justify-center text-white/50">
               <Inbox className="w-16 h-16 mb-4 opacity-40" />
               <p className="text-lg mb-1">没有找到匹配的歌曲</p>
@@ -156,10 +178,10 @@ export function SongTable() {
           )}
         </div>
 
-        {!isEmpty && (
+        {!isLoading && !loadError && !isEmpty && (
           <div className="px-5 py-3 border-t border-white/5 flex items-center justify-between text-xs text-white/50 bg-wolf-900/40">
             <span>
-              🎵 当前显示 <span className="text-accent-gold font-semibold">{filteredSongs.length}</span> / {useSongStore.getState().allSongs.length} 首
+              🎵 当前显示 <span className="text-accent-gold font-semibold">{filteredSongs.length}</span> / {allSongs.length} 首
             </span>
             <span className="hidden sm:inline text-white/40">
               💡 点击「点歌」按钮提交你的点歌请求
