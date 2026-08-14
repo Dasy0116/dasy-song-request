@@ -1,0 +1,16 @@
+# Netlify 部署配置：SPA 回退 + 国内访问优化
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+# SPA 路由回退
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# 缓存静态资源
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

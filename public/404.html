@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Dasy独狼 · 点歌台</title>
+    <script>
+      // spa-github-pages 方案：GitHub Pages 不支持 SPA 回退，
+      // 404 时跳回 index.html 并把路由写入 sessionStorage
+      (function () {
+        var redirect = sessionStorage.redirect;
+        delete sessionStorage.redirect;
+        if (redirect && redirect !== location.href) {
+          history.replaceState(null, null, redirect);
+        }
+      })();
+    </script>
+    <script>
+      location.replace(
+        "./#" + location.pathname + location.search + location.hash
+      );
+    </script>
+  </head>
+  <body></body>
+</html>
