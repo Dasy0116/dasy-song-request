@@ -6,6 +6,8 @@ import {
   User,
   MessageSquare,
   CheckCircle,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
 import { useSongStore } from "@/store/useSongStore";
 
@@ -14,6 +16,8 @@ export function RequestModal() {
   const selectedSong = useSongStore((s) => s.selectedSong);
   const closeModal = useSongStore((s) => s.closeRequestModal);
   const submitRequest = useSongStore((s) => s.submitRequest);
+  const submitting = useSongStore((s) => s.submittingRequest);
+  const errorToast = useSongStore((s) => s.errorToast);
 
   const [nickname, setNickname] = useState("");
   const [message, setMessage] = useState("");
@@ -32,22 +36,22 @@ export function RequestModal() {
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeModal();
+      if (e.key === "Escape" && !submitting) closeModal();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [isOpen, closeModal]);
+  }, [isOpen, closeModal, submitting]);
 
   if (!isOpen || !selectedSong) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedNick = nickname.trim();
     if (!trimmedNick) {
       setErrors({ nickname: "请先填写你的昵称呀~" });
       return;
     }
-    submitRequest({
+    await submitRequest({
       nickname: trimmedNick,
       message: message.trim(),
     });
@@ -159,20 +163,38 @@ export function RequestModal() {
               <button
                 type="button"
                 onClick={closeModal}
-                className="btn-secondary flex-1"
+                disabled={submitting}
+                className="btn-secondary flex-1 disabled:opacity-50"
               >
                 再想想
               </button>
               <button
                 type="submit"
-                className="btn-primary flex-1 relative overflow-hidden"
+                disabled={submitting}
+                className="btn-primary flex-1 relative overflow-hidden disabled:opacity-70 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5"
               >
-                <CheckCircle className="w-4 h-4" />
-                确认点歌
-                <span className="absolute inset-0 shine-effect animate-shine pointer-events-none" />
+                {submitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    提交中...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="w-4 h-4" />
+                    确认点歌
+                    <span className="absolute inset-0 shine-effect animate-shine pointer-events-none" />
+                  </>
+                )}
               </button>
             </div>
           </form>
+
+          {errorToast && isOpen && (
+            <div className="mt-4 p-2.5 rounded-xl border border-red-400/40 bg-red-400/10 text-red-300 text-xs flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              {errorToast}
+            </div>
+          )}
 
           <p className="mt-4 text-[11px] text-center text-white/30 leading-relaxed">
             💡 温馨提示：提交后请耐心等待主播翻牌哦~ 付费歌曲可能需要额外支持

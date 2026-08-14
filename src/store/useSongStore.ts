@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Song, SongRequest, FilterKey, FilterState } from "@/types";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 
 interface SongStore extends FilterState {
   // 歌曲数据
@@ -11,10 +12,13 @@ interface SongStore extends FilterState {
   // 弹窗状态
   isRequestModalOpen: boolean;
   selectedSong: Song | null;
-  // 点歌记录
+  // 点歌记录（粉丝端通常不看，后台看）
   requestHistory: SongRequest[];
   // 成功提示
   successToast: string | null;
+  errorToast: string | null;
+  // 提交中
+  submittingRequest: boolean;
 
   // Actions
   fetchSongs: () => Promise<void>;
@@ -24,8 +28,14 @@ interface SongStore extends FilterState {
   playRandom: () => void;
   openRequestModal: (song: Song) => void;
   closeRequestModal: () => void;
-  submitRequest: (data: { nickname: string; message: string }) => void;
+  submitRequest: (data: { nickname: string; message: string }) => Promise<void>;
   clearToast: () => void;
+
+  // 后台相关 actions
+  adminFetchRequests: () => Promise<SongRequest[]>;
+  adminUpdateStatus: (id: string, status: SongRequest["status"]) => Promise<void>;
+  adminDelete: (id: string) => Promise<void>;
+  adminReorder: (id: string, direction: "up" | "down", list: SongRequest[]) => Promise<void>;
 }
 
 export const useSongStore = create<SongStore>((set, get) => ({
@@ -53,16 +63,15 @@ export const useSongStore = create<SongStore>((set, get) => ({
 
   // Toast
   successToast: null,
+  errorToast: null,
+  submittingRequest: false,
 
   fetchSongs: async () => {
     set({ isLoading: true, loadError: null });
     try {
-      // 加时间戳防止缓存，确保每次拿到最新歌单
       const url = `./songs.json?t=${Date.now()}`;
       const res = await fetch(url);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: Song[] = await res.json();
       set({ allSongs: data, isLoading: false, loadError: null });
     } catch (err) {
@@ -106,39 +115,107 @@ export const useSongStore = create<SongStore>((set, get) => ({
   },
 
   openRequestModal: (song) =>
-    set({
-      selectedSong: song,
-      isRequestModalOpen: true,
-    }),
+    set({ selectedSong: song, isRequestModalOpen: true }),
 
   closeRequestModal: () =>
-    set({
-      isRequestModalOpen: false,
-      selectedSong: null,
-    }),
+    set({ isRequestModalOpen: false, selectedSong: null }),
 
-  submitRequest: ({ nickname, message }) => {
-    const { selectedSong, requestHistory } = get();
+  submitRequest: async ({ nickname, message }) => {
+    const { selectedSong } = get();
     if (!selectedSong) return;
 
-    const newRequest: SongRequest = {
-      id: Date.now(),
-      songId: selectedSong.id,
-      songTitle: selectedSong.title,
+    set({ submittingRequest: true, errorToast: null });
+    const now = new Date().toISOString();
+    const payload = {
+      song_id: selectedSong.id,
+      song_title: selectedSong.title,
+      song_artist: selectedSong.artist,
       nickname,
       message,
-      createdAt: new Date().toISOString(),
+      status: "pending" as const,
+      order_index: Date.now(),
     };
 
-    set({
-      requestHistory: [...requestHistory, newRequest],
-      isRequestModalOpen: false,
-      selectedSong: null,
-      successToast: `🐺 点歌成功！已为「${nickname}」登记《${selectedSong.title}》`,
-    });
+    try {
+      if (isSupabaseConfigured) {
+        const { error } = await supabase
+          .from("song_requests")
+          .insert([payload]);
+        if (error) throw error;
+      } else {
+        // 未配置 Supabase 时退化到本地记录，便于本地预览
+        console.warn("[Supabase未配置] 点歌仅写入本地 requestHistory:", payload);
+      }
 
-    setTimeout(() => set({ successToast: null }), 4000);
+      set({
+        isRequestModalOpen: false,
+        selectedSong: null,
+        submittingRequest: false,
+        successToast: `🐺 点歌成功！已为「${nickname}」登记《${selectedSong.title}》`,
+      });
+      setTimeout(() => set({ successToast: null }), 4000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "未知错误";
+      console.error(err);
+      set({
+        submittingRequest: false,
+        errorToast: `点歌提交失败，请稍后重试（${msg}）`,
+      });
+      setTimeout(() => set({ errorToast: null }), 6000);
+    }
   },
 
-  clearToast: () => set({ successToast: null }),
+  clearToast: () => set({ successToast: null, errorToast: null }),
+
+  // ============ 后台 ============
+  adminFetchRequests: async () => {
+    if (!isSupabaseConfigured) return [];
+    const { data, error } = await supabase
+      .from("song_requests")
+      .select("*")
+      .order("order_index", { ascending: true })
+      .order("created_at", { ascending: true });
+    if (error) throw error;
+    return (data || []) as SongRequest[];
+  },
+
+  adminUpdateStatus: async (id, status) => {
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase
+      .from("song_requests")
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (error) throw error;
+  },
+
+  adminDelete: async (id) => {
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase
+      .from("song_requests")
+      .delete()
+      .eq("id", id);
+    if (error) throw error;
+  },
+
+  adminReorder: async (id, direction, list) => {
+    if (!isSupabaseConfigured) return;
+    const idx = list.findIndex((x) => x.id === id);
+    if (idx < 0) return;
+    const target = direction === "up" ? idx - 1 : idx + 1;
+    if (target < 0 || target >= list.length) return;
+    const a = list[idx];
+    const b = list[target];
+    const aOrder = a.order_index;
+    const bOrder = b.order_index;
+    const { error: e1 } = await supabase
+      .from("song_requests")
+      .update({ order_index: bOrder, updated_at: new Date().toISOString() })
+      .eq("id", a.id);
+    if (e1) throw e1;
+    const { error: e2 } = await supabase
+      .from("song_requests")
+      .update({ order_index: aOrder, updated_at: new Date().toISOString() })
+      .eq("id", b.id);
+    if (e2) throw e2;
+  },
 }));

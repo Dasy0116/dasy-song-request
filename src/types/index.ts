@@ -17,12 +17,16 @@ export interface Song {
 }
 
 export interface SongRequest {
-  id: number;
-  songId: number;
-  songTitle: string;
+  id: string;
+  song_id: number;
+  song_title: string;
+  song_artist: string;
   nickname: string;
   message: string;
-  createdAt: string;
+  status: "pending" | "sung" | "deleted";
+  order_index: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface FilterState {
