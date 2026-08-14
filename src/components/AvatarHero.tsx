@@ -60,7 +60,7 @@ export function AvatarHero() {
           擅长 ACG · 术曲 · JPOP
         </span>
         <span className="chip bg-accent-gold/20 text-accent-gold border border-accent-gold/30">
-          苦情歌 · 流行
+          民谣 · 流行
         </span>
       </p>
 
@@ -71,7 +71,7 @@ export function AvatarHero() {
         onClick={(e) => e.stopPropagation()}
       >
         <a
-          href="https://space.bilibili.com/"
+          href="https://space.bilibili.com/509305711"
           target="_blank"
           rel="noopener noreferrer"
           className="btn-secondary"

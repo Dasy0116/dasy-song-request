@@ -1,4 +1,33 @@
-<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="32" height="32" fill="#0A0B0D"/>
-<path d="M26.6677 23.7149H8.38057V20.6496H5.33301V8.38159H26.6677V23.7149ZM8.38057 20.6496H23.6201V11.4482H8.38057V20.6496ZM16.0011 16.0021L13.8461 18.1705L11.6913 16.0021L13.8461 13.8337L16.0011 16.0021ZM22.0963 16.0008L19.9414 18.1691L17.7865 16.0008L19.9414 13.8324L22.0963 16.0008Z" fill="#32F08C"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1a1033"/>
+      <stop offset="100%" stop-color="#0a0716"/>
+    </linearGradient>
+    <linearGradient id="wolf" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#6d28d9"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="40%" r="50%">
+      <stop offset="0%" stop-color="#fbbf24" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#fbbf24" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="12" fill="url(#bg)"/>
+  <!-- 狼头剪影 -->
+  <path d="M32 10 L24 18 L20 14 L16 22 L22 28 L18 34 L24 36 L26 42 L22 50 L32 54 L42 50 L38 42 L40 36 L46 34 L42 28 L48 22 L44 14 L40 18 Z" fill="url(#wolf)" stroke="#c4b5fd" stroke-width="0.8"/>
+  <!-- 左耳 -->
+  <path d="M20 14 L16 8 L22 18 Z" fill="#6d28d9"/>
+  <!-- 右耳 -->
+  <path d="M44 14 L48 8 L42 18 Z" fill="#6d28d9"/>
+  <!-- 眼睛 -->
+  <ellipse cx="26" cy="28" rx="2.2" ry="2.8" fill="#fbbf24"/>
+  <ellipse cx="38" cy="28" rx="2.2" ry="2.8" fill="#fbbf24"/>
+  <circle cx="26" cy="28" r="1.2" fill="#0a0716"/>
+  <circle cx="38" cy="28" r="1.2" fill="#0a0716"/>
+  <!-- 鼻口 -->
+  <path d="M30 38 L32 42 L34 38 Z" fill="#c4b5fd"/>
+  <path d="M28 42 Q32 46 36 42" fill="none" stroke="#c4b5fd" stroke-width="1.2" stroke-linecap="round"/>
+  <!-- 发光效果 -->
+  <ellipse cx="32" cy="28" rx="16" ry="12" fill="url(#glow)" opacity="0.3"/>
 </svg>

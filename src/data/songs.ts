@@ -11,7 +11,6 @@ export const genres: string[] = [
   "术曲",
   "民谣",
   "JPOP",
-  "苦情歌",
   "古风",
 ];
 
