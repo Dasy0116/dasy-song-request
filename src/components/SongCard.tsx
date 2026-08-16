@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useSongFilter } from "@/hooks/useSongFilter";
 import { useSongStore } from "@/store/useSongStore";
 import type { Song } from "@/types";
@@ -39,10 +40,17 @@ function MobileSongCard({ song, index }: CardProps) {
 
   const isHighlighted = highlightedSongId === song.id;
   const isDisabled = song.status !== "available";
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isHighlighted && cardRef.current) {
+      cardRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [isHighlighted]);
 
   return (
     <div
-      id={`song-row-${song.id}`}
+      ref={cardRef}
       className={`
         glass-card p-4 transition-all duration-300 relative overflow-hidden
         ${isHighlighted ? "animate-highlight [animation-duration:1.5s]" : ""}

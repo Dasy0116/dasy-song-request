@@ -105,12 +105,6 @@ export const useSongStore = create<SongStore>((set, get) => ({
     const random =
       availableSongs[Math.floor(Math.random() * availableSongs.length)];
     set({ highlightedSongId: random.id });
-    setTimeout(() => {
-      const el = document.getElementById(`song-row-${random.id}`);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-    }, 100);
     setTimeout(() => set({ highlightedSongId: null }), 2000);
   },
 

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useSongFilter } from "@/hooks/useSongFilter";
 import { useSongStore } from "@/store/useSongStore";
 import type { Song } from "@/types";
@@ -26,10 +27,17 @@ function SongRow({ song, index }: SongRowProps) {
 
   const isHighlighted = highlightedSongId === song.id;
   const isDisabled = song.status !== "available";
+  const rowRef = useRef<HTMLTableRowElement>(null);
+
+  useEffect(() => {
+    if (isHighlighted && rowRef.current) {
+      rowRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [isHighlighted]);
 
   return (
     <tr
-      id={`song-row-${song.id}`}
+      ref={rowRef}
       className={`
         border-b border-white/5 transition-all duration-300
         hover:bg-white/[0.06] hover:shadow-[inset_4px_0_0_rgba(139,92,246,0.5)]
