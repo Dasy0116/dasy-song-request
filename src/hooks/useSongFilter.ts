@@ -49,12 +49,12 @@ export function useSongFilter(): {
 
   const sortedSongs = useMemo(() => {
     return [...filteredSongs].sort((a, b) => {
-      const la = a.firstLetter || "~~";
-      const lb = b.firstLetter || "~~";
+      const la = a.firstLetter || "";
+      const lb = b.firstLetter || "";
       const maxLen = Math.max(la.length, lb.length);
       for (let i = 0; i < maxLen; i++) {
-        const ca = la.charCodeAt(i) ?? -1;
-        const cb = lb.charCodeAt(i) ?? -1;
+        const ca = i < la.length ? la.charCodeAt(i) : -1;
+        const cb = i < lb.length ? lb.charCodeAt(i) : -1;
         if (ca !== cb) return ca - cb;
       }
       const ta = a.title || "";
