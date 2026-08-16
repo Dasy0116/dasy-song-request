@@ -1,0 +1,20 @@
+{
+  "name": "Dasy独狼 · 点歌台",
+  "short_name": "Dasy点歌",
+  "description": "Dasy独狼的专属点歌台 - 粉丝点歌互动平台",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0716",
+  "theme_color": "#1a1033",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
