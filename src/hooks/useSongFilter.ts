@@ -16,7 +16,7 @@ export function useSongFilter(): {
 
   const filteredSongs = useMemo(() => {
     return allSongs.filter((song) => {
-      if (firstLetter !== "全部" && song.firstLetter !== firstLetter) {
+      if (firstLetter !== "全部" && song.firstLetter?.[0] !== firstLetter) {
         return false;
       }
       if (language !== "全部" && song.language !== language) {
@@ -49,10 +49,22 @@ export function useSongFilter(): {
 
   const sortedSongs = useMemo(() => {
     return [...filteredSongs].sort((a, b) => {
-      const la = a.firstLetter || "~";
-      const lb = b.firstLetter || "~";
-      if (la === lb) return a.title.localeCompare(b.title, "zh");
-      return la.localeCompare(lb, "zh");
+      const la = a.firstLetter || "~~";
+      const lb = b.firstLetter || "~~";
+      const maxLen = Math.max(la.length, lb.length);
+      for (let i = 0; i < maxLen; i++) {
+        const ca = la.charCodeAt(i) ?? -1;
+        const cb = lb.charCodeAt(i) ?? -1;
+        if (ca !== cb) return ca - cb;
+      }
+      const ta = a.title || "";
+      const tb = b.title || "";
+      for (let i = 0; i < Math.min(ta.length, tb.length); i++) {
+        const ca = ta.charCodeAt(i);
+        const cb = tb.charCodeAt(i);
+        if (ca !== cb) return ca - cb;
+      }
+      return ta.length - tb.length;
     });
   }, [filteredSongs]);
 
