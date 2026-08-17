@@ -40,10 +40,17 @@ export function AvatarHero() {
         <div className="w-36 h-36 md:w-44 md:h-44 rounded-full p-[3px] bg-violet-glow animate-breathe">
           <div className="w-full h-full rounded-full bg-wolf-900 p-1.5 overflow-hidden">
             <img
-              src="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=cool%20anime%20wolf%20vtuber%20portrait%2C%20mysterious%20lone%20wolf%20with%20dark%20purple%20hood%2C%20golden%20glowing%20eyes%2C%20moonlight%20background%2C%20high%20quality%20digital%20art&image_size=square_hd"
+              src="./avatar.png"
               alt="Dasy独狼头像"
               className="w-full h-full w-full h-full object-cover rounded-full"
               loading="eager"
+              onError={(e) => {
+                const img = e.currentTarget;
+                if (!img.src.includes("__retry")) {
+                  // 兜底：如果加载失败，加时间戳重试一次
+                  img.src = `./avatar.png?__retry=${Date.now()}`;
+                }
+              }}
             />
           </div>
         </div>
