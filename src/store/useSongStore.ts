@@ -73,6 +73,10 @@ interface SongStore extends FilterState {
   adminUpdateStatus: (id: string, status: SongRequest["status"]) => Promise<void>;
   adminDelete: (id: string) => Promise<void>;
   adminReorder: (id: string, direction: "up" | "down", list: SongRequest[]) => Promise<void>;
+  // 后台：歌单在线管理（Supabase songs 表 CRUD）
+  adminFetchSongs: () => Promise<Song[]>;
+  adminUpsertSong: (song: Song) => Promise<Song>;
+  adminDeleteSong: (id: number) => Promise<void>;
 }
 
 export const useSongStore = create<SongStore>((set, get) => ({
@@ -116,11 +120,55 @@ export const useSongStore = create<SongStore>((set, get) => ({
   fetchSongs: async () => {
     set({ isLoading: true, loadError: null });
     try {
+      // 1. 先拉本地 songs.json（总有），把 first_letter 等字段与 Supabase 对齐
       const url = `./songs.json?t=${Date.now()}`;
       const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: Song[] = await res.json();
-      set({ allSongs: data, isLoading: false, loadError: null });
+      if (!res.ok) throw new Error(`本地歌单加载失败 HTTP ${res.status}`);
+      const localSongs: Song[] = await res.json();
+
+      let merged = localSongs;
+
+      // 2. 如果配置了 Supabase，尝试拉 songs 表，和本地合并（以 id 为准）
+      if (isSupabaseConfigured) {
+        try {
+          const { data, error } = await supabase
+            .from("songs")
+            .select("*");
+          if (!error && Array.isArray(data) && data.length > 0) {
+            const remoteMap = new Map<number, Song>();
+            for (const row of data as Record<string, unknown>[]) {
+              remoteMap.set(row.id as number, {
+                id: row.id as number,
+                title: row.title as string,
+                artist: row.artist as string,
+                language: row.language as Song["language"],
+                genre: (row.genre as string) || "",
+                firstLetter: (row.first_letter as string) || "",
+                isPaid: !!row.is_paid,
+                hasClip: !!row.has_clip,
+                remark: (row.remark as string) || "",
+                bvLink: (row.bv_link as string | undefined) || undefined,
+                status: (row.status as Song["status"]) || "available",
+              });
+            }
+            // 合并：本地 id 存在则覆盖，同时保留远程独有项
+            const idSet = new Set<number>();
+            const result: Song[] = [];
+            for (const s of localSongs) {
+              idSet.add(s.id);
+              result.push(remoteMap.get(s.id) || s);
+            }
+            for (const [id, s] of remoteMap) {
+              if (!idSet.has(id)) result.push(s);
+            }
+            merged = result;
+          }
+        } catch {
+          // Supabase songs 表不存在或查询失败，静默忽略，只使用本地
+        }
+      }
+
+      set({ allSongs: merged, isLoading: false, loadError: null });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "未知错误";
       set({ isLoading: false, loadError: `歌单加载失败: ${msg}` });
@@ -451,5 +499,60 @@ export const useSongStore = create<SongStore>((set, get) => ({
       .update({ order_index: aOrder, updated_at: new Date().toISOString() })
       .eq("id", b.id);
     if (e2) throw e2;
+  },
+
+  // ============ 后台：歌单管理（Supabase songs 表） ============
+  adminFetchSongs: async () => {
+    if (!isSupabaseConfigured) return [];
+    const { data, error } = await supabase
+      .from("songs")
+      .select("*")
+      .order("firstLetter", { ascending: true })
+      .order("title", { ascending: true });
+    if (error) throw error;
+    return (data || []) as Song[];
+  },
+
+  adminUpsertSong: async (song) => {
+    if (!isSupabaseConfigured) throw new Error("Supabase 未配置");
+    const payload = {
+      id: song.id,
+      title: song.title,
+      artist: song.artist,
+      language: song.language,
+      genre: song.genre,
+      first_letter: song.firstLetter,
+      is_paid: song.isPaid,
+      has_clip: song.hasClip,
+      remark: song.remark,
+      bv_link: song.bvLink || null,
+      status: song.status,
+    };
+    const { data, error } = await supabase
+      .from("songs")
+      .upsert(payload, { onConflict: "id" })
+      .select()
+      .single();
+    if (error) throw error;
+    const row = data as Record<string, unknown>;
+    return {
+      id: row.id as number,
+      title: row.title as string,
+      artist: row.artist as string,
+      language: row.language as Song["language"],
+      genre: row.genre as string,
+      firstLetter: (row.first_letter as string) || "",
+      isPaid: !!row.is_paid,
+      hasClip: !!row.has_clip,
+      remark: (row.remark as string) || "",
+      bvLink: (row.bv_link as string | undefined) || undefined,
+      status: row.status as Song["status"],
+    };
+  },
+
+  adminDeleteSong: async (id) => {
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase.from("songs").delete().eq("id", id);
+    if (error) throw error;
   },
 }));

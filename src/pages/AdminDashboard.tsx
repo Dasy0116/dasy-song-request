@@ -18,15 +18,43 @@ import {
   Users,
   ChevronDown,
   ChevronUp,
+  Plus,
+  Pencil,
+  Download,
+  X,
+  Save,
+  BookOpen,
+  Disc3,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useSongStore } from "@/store/useSongStore";
-import type { SongRequest } from "@/types";
+import type { SongRequest, Song, Language, SongStatus } from "@/types";
 import { StarBackground } from "@/components/StarBackground";
 
 const ADMIN_PASSWORD = "Dasy0116";
 
 type Tab = "all" | "pending" | "sung";
+type AdminSection = "queue" | "songs";
+
+const LANGUAGES: Language[] = ["国语", "日语", "英语", "韩语", "其他"];
+const DEFAULT_GENRES = ["流行", "摇滚", "民谣", "术曲", "古风", "粤语", "电子", "R&B", "其他"];
+const SONG_STATUSES: SongStatus[] = ["available", "full", "closed"];
+
+function guessFirstLetter(title: string): string {
+  if (!title) return "";
+  // 取每个字（或段）的首字：先按空格/假名/非 ASCII 切，粗略前 3 字符的 ASCII 首字母大写
+  const chars = Array.from(title);
+  let out = "";
+  for (let i = 0; i < chars.length && out.length < 3; i++) {
+    const c = chars[i];
+    const code = c.charCodeAt(0);
+    // ASCII 字母/数字直接用大写
+    if ((code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57)) {
+      out += c.toUpperCase();
+    }
+  }
+  return out;
+}
 
 function startOfDay(d: Date) {
   const x = new Date(d);
@@ -146,6 +174,21 @@ export function AdminPasswordGate({
   );
 }
 
+function emptySong(nextId: number): Song {
+  return {
+    id: nextId,
+    title: "",
+    artist: "",
+    language: "国语",
+    genre: "流行",
+    firstLetter: "",
+    isPaid: false,
+    hasClip: false,
+    remark: "-",
+    status: "available",
+  };
+}
+
 export default function AdminDashboard() {
   const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem("dasy_admin_unlocked") === "1");
   const [list, setList] = useState<SongRequest[]>([]);
@@ -156,10 +199,27 @@ export default function AdminDashboard() {
   const [workingId, setWorkingId] = useState<string | null>(null);
   const [statsOpen, setStatsOpen] = useState(false);
 
+  // 歌单管理 section
+  const [section, setSection] = useState<AdminSection>("queue");
+  const [songs, setSongs] = useState<Song[]>([]);
+  const [songsLoading, setSongsLoading] = useState(false);
+  const [songsError, setSongsError] = useState<string | null>(null);
+  const [songKeyword, setSongKeyword] = useState("");
+  const [songEditorOpen, setSongEditorOpen] = useState(false);
+  const [editingSong, setEditingSong] = useState<Song | null>(null);
+  const [savingSong, setSavingSong] = useState(false);
+  const [songWorkId, setSongWorkId] = useState<number | null>(null);
+  const [songsOnlineMode, setSongsOnlineMode] = useState(false);
+
   const adminFetchRequests = useSongStore((s) => s.adminFetchRequests);
   const adminUpdateStatus = useSongStore((s) => s.adminUpdateStatus);
   const adminDelete = useSongStore((s) => s.adminDelete);
   const adminReorder = useSongStore((s) => s.adminReorder);
+  const adminFetchSongs = useSongStore((s) => s.adminFetchSongs);
+  const adminUpsertSong = useSongStore((s) => s.adminUpsertSong);
+  const adminDeleteSong = useSongStore((s) => s.adminDeleteSong);
+  const allSongs = useSongStore((s) => s.allSongs);
+  const fetchSongs = useSongStore((s) => s.fetchSongs);
 
   // 统计计算
   const stats = useMemo(() => {
@@ -246,16 +306,147 @@ export default function AdminDashboard() {
     }
   };
 
+  const loadSongs = async () => {
+    setSongsLoading(true);
+    setSongsError(null);
+    try {
+      // 先尝试从 Supabase songs 表拉（在线管理模式）
+      const online = await adminFetchSongs();
+      if (online && online.length > 0) {
+        setSongs(online);
+        setSongsOnlineMode(true);
+      } else {
+        // Supabase 表为空/不存在 → fallback 到 store 中已加载的歌单（供查看，编辑会保存到 Supabase）
+        setSongs(allSongs.length > 0 ? allSongs : []);
+        setSongsOnlineMode(false);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "未知错误";
+      setSongsError(`歌单加载失败：${msg}（Supabase 未配置 songs 表？）`);
+      setSongs(allSongs.length > 0 ? allSongs : []);
+      setSongsOnlineMode(false);
+    } finally {
+      setSongsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (unlocked) load();
   }, [unlocked]);
 
-  // 每 15 秒自动刷新
+  // 进入歌单管理 section 时加载
   useEffect(() => {
     if (!unlocked) return;
-    const t = setInterval(load, 15000);
+    if (section === "songs") loadSongs();
+  }, [unlocked, section]);
+
+  // 每 15 秒自动刷新（只在对应 section 生效）
+  useEffect(() => {
+    if (!unlocked) return;
+    const t = setInterval(() => {
+      if (section === "queue") load();
+      if (section === "songs") loadSongs();
+    }, 15000);
     return () => clearInterval(t);
-  }, [unlocked]);
+  }, [unlocked, section]);
+
+  // ===== 歌单管理 actions =====
+  const openNewSongEditor = () => {
+    const maxId = songs.reduce((m, s) => Math.max(m, s.id), 0);
+    setEditingSong(emptySong(maxId + 1));
+    setSongEditorOpen(true);
+  };
+  const openEditSong = (s: Song) => {
+    setEditingSong({ ...s });
+    setSongEditorOpen(true);
+  };
+  const saveSong = async (e: React.FormEvent, close = true) => {
+    e.preventDefault();
+    if (!editingSong) return;
+    if (!editingSong.title.trim()) {
+      alert("请填写歌曲名");
+      return;
+    }
+    if (!editingSong.artist.trim()) {
+      alert("请填写歌手");
+      return;
+    }
+    if (!editingSong.firstLetter) {
+      const guess = guessFirstLetter(editingSong.title);
+      if (guess) {
+        editingSong.firstLetter = guess;
+      }
+    }
+    setSavingSong(true);
+    try {
+      const saved = await adminUpsertSong(editingSong);
+      // 保存后重新加载 + 刷新 store 让粉丝端即时看到
+      await loadSongs();
+      await fetchSongs();
+      setSongsOnlineMode(true);
+      setSongsError(null);
+      if (close) setSongEditorOpen(false);
+      // 返回插入/更新后的版本（id 已保证）
+      setEditingSong(saved);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "保存失败";
+      alert(`保存失败：${msg}\n\n如果提示关系"songs"不存在，请先在 Supabase 建 songs 表（SQL 见下面帮助）`);
+    } finally {
+      setSavingSong(false);
+    }
+  };
+  const deleteSong = async (s: Song) => {
+    if (!confirm(`确认删除《${s.title}》？\n粉丝端歌单会同步移除。`)) return;
+    setSongWorkId(s.id);
+    try {
+      await adminDeleteSong(s.id);
+      await loadSongs();
+      await fetchSongs();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "删除失败";
+      alert(`删除失败：${msg}`);
+    } finally {
+      setSongWorkId(null);
+    }
+  };
+  const exportSongsJson = () => {
+    // 用当前正在编辑/展示的 songs 数组，对齐 songs.json 本地格式
+    const sorted = [...songs].sort((a, b) => {
+      const la = a.firstLetter || "";
+      const lb = b.firstLetter || "";
+      // 按 firstLetter ASCII 逐位，相同按 title
+      const len = Math.max(la.length, lb.length);
+      for (let i = 0; i < len; i++) {
+        const ca = i < la.length ? la.charCodeAt(i) : -1;
+        const cb = i < lb.length ? lb.charCodeAt(i) : -1;
+        if (ca !== cb) return ca - cb;
+      }
+      return a.title.localeCompare(b.title);
+    });
+    const text = JSON.stringify(sorted, null, 2);
+    const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "songs.json";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      a.remove();
+    }, 500);
+  };
+
+  const filteredSongs = useMemo(() => {
+    const k = songKeyword.trim().toLowerCase();
+    if (!k) return songs;
+    return songs.filter((s) =>
+      s.title.toLowerCase().includes(k) ||
+      s.artist.toLowerCase().includes(k) ||
+      (s.genre || "").toLowerCase().includes(k) ||
+      (s.firstLetter || "").toLowerCase().includes(k)
+    );
+  }, [songs, songKeyword]);
 
   if (!unlocked) {
     return (
@@ -327,23 +518,25 @@ export default function AdminDashboard() {
       />
       <div className="relative z-10 container max-w-6xl pt-10 pb-20">
         {/* 顶栏 */}
-        <div className="flex flex-wrap items-center gap-4 mb-6">
+        <div className="flex flex-wrap items-center gap-4 mb-4">
           <div>
             <h1 className="font-display text-3xl md:text-4xl text-gradient-gold mb-1">
-              🐺 主播后台 · 点歌队列
+              🐺 主播后台
             </h1>
             <p className="text-xs text-white/50">
-              调整顺序 · 标记已唱 · 删除。每 15 秒自动刷新，或手动点刷新按钮
+              点歌队列管理 · 歌单在线编辑。每 15 秒自动刷新
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
             <button
-              onClick={load}
-              disabled={loading}
+              onClick={() => { section === "queue" ? load() : loadSongs(); }}
+              disabled={section === "queue" ? loading : songsLoading}
               className="btn-secondary inline-flex items-center gap-1.5"
             >
               <RefreshCw
-                className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}
+                className={`w-4 h-4 ${
+                  (section === "queue" ? loading : songsLoading) ? "animate-spin" : ""
+                }`}
               />
               刷新
             </button>
@@ -354,8 +547,45 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* 统计卡片：核心数字 */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        {/* 顶级 Section Tabs */}
+        <div className="flex flex-wrap items-center gap-2 mb-6">
+          <div className="flex bg-white/5 rounded-xl p-1 border border-white/10">
+            <button
+              onClick={() => setSection("queue")}
+              className={`px-4 py-1.5 rounded-lg text-sm inline-flex items-center gap-1.5 transition-all ${
+                section === "queue"
+                  ? "bg-gradient-to-r from-accent-violet to-accent-blue text-white shadow-lg shadow-accent-violet/20"
+                  : "text-white/60 hover:text-white hover:bg-white/5"
+              }`}
+            >
+              <ListOrdered className="w-3.5 h-3.5" /> 点歌队列
+            </button>
+            <button
+              onClick={() => setSection("songs")}
+              className={`px-4 py-1.5 rounded-lg text-sm inline-flex items-center gap-1.5 transition-all ${
+                section === "songs"
+                  ? "bg-gradient-to-r from-accent-gold/90 to-amber-500 text-wolf-900 shadow-lg shadow-accent-gold/30 font-medium"
+                  : "text-white/60 hover:text-white hover:bg-white/5"
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5" /> 歌单管理
+              {songsOnlineMode ? (
+                <span className="ml-0.5 text-[10px] inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 border border-emerald-400/30">
+                  <Disc3 className="w-2 h-2" /> 在线
+                </span>
+              ) : (
+                <span className="ml-0.5 text-[10px] inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-white/10 text-white/60 border border-white/10">
+                  仅查看
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {section === "queue" ? (
+          <>
+            {/* 统计卡片：核心数字 */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           <div className="glass-card p-4">
             <div className="flex items-center gap-1.5 text-xs text-white/50 mb-1">
               <ListOrdered className="w-3.5 h-3.5" /> 总点歌
@@ -638,24 +868,472 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* 底部操作 */}
-        <div className="mt-8 text-center">
-          <Link
-            to="/"
-            className="btn-secondary inline-flex items-center gap-1.5"
+          {/* 底部操作 */}
+          <div className="mt-8 text-center">
+            <Link
+              to="/"
+              className="btn-secondary inline-flex items-center gap-1.5"
+            >
+              <ArrowLeft className="w-4 h-4" /> 回到点歌主页
+            </Link>
+            <button
+              onClick={() => {
+                sessionStorage.removeItem("dasy_admin_unlocked");
+                location.reload();
+              }}
+              className="ml-3 px-4 py-2 rounded-xl text-sm border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition"
+            >
+              🔒 退出后台（锁定密码）
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          {/* 歌单管理 section */}
+          {!songsOnlineMode && (
+            <div className="mb-4 p-4 rounded-xl border border-accent-gold/40 bg-accent-gold/10 text-xs text-accent-gold/90 leading-relaxed">
+              <strong>尚未启用在线管理模式。</strong>
+              请先在 Supabase 创建 <code className="mx-1 px-1.5 py-0.5 rounded bg-black/30 font-mono">songs</code> 表，
+              然后任意"保存"一首歌即可触发写入并自动切换为在线模式。
+              <details className="mt-2 text-white/70">
+                <summary className="cursor-pointer hover:text-white">建表 SQL（复制到 Supabase SQL Editor 执行）</summary>
+                <pre className="mt-2 p-3 rounded-lg bg-black/40 border border-white/10 overflow-x-auto text-[11px] font-mono leading-relaxed whitespace-pre">
+{`create table if not exists songs (
+  id           bigint primary key,
+  title        text not null,
+  artist       text not null,
+  language     text not null default '国语',
+  genre        text not null default '流行',
+  first_letter text not null default '',
+  is_paid      boolean not null default false,
+  has_clip     boolean not null default false,
+  remark       text not null default '-',
+  bv_link      text,
+  status       text not null default 'available'
+);
+-- 匿名可查（粉丝端）
+alter table songs enable row level security;
+drop policy if exists "songs anon select" on songs;
+create policy "songs anon select" on songs
+  for select using (true);
+-- 匿名可写（需通过密码保护的后台）——如果你想更安全，
+-- 可以用 service_role 直接在 store admin* 方法里调用，不依赖 anon 写权限
+drop policy if exists "songs anon all" on songs;
+create policy "songs anon all" on songs
+  for all using (true) with check (true);`}
+                </pre>
+              </details>
+            </div>
+          )}
+
+          {songsError && songsOnlineMode === false && (
+            <div className="mb-4 p-3 rounded-xl border border-red-400/40 bg-red-400/10 text-red-300 text-sm">
+              {songsError}
+            </div>
+          )}
+
+          {/* 工具栏 */}
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <div className="flex items-center gap-2 text-xs text-white/60">
+              <BookOpen className="w-3.5 h-3.5 text-accent-gold" />
+              共 <span className="text-white font-bold">{songs.length}</span> 首
+              {filteredSongs.length !== songs.length && (
+                <>
+                  · 筛选 <span className="text-accent-gold">{filteredSongs.length}</span>
+                </>
+              )}
+            </div>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <div className="relative w-56">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-white/40" />
+                <input
+                  type="text"
+                  value={songKeyword}
+                  onChange={(e) => setSongKeyword(e.target.value)}
+                  placeholder="搜索歌名/歌手/分类/首字母..."
+                  className="glass-input w-full pl-8 pr-4 py-2 text-xs"
+                />
+              </div>
+              <button
+                onClick={exportSongsJson}
+                className="btn-secondary inline-flex items-center gap-1.5"
+                title="导出 songs.json 到本地备份"
+              >
+                <Download className="w-3.5 h-3.5" /> 导出 JSON
+              </button>
+              <button
+                onClick={openNewSongEditor}
+                className="btn-primary inline-flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" /> 新增歌曲
+              </button>
+            </div>
+          </div>
+
+          {/* 歌单列表 */}
+          {songsLoading ? (
+            <div className="text-center py-16 text-white/50">
+              <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-3" />
+              歌单加载中...
+            </div>
+          ) : filteredSongs.length === 0 ? (
+            <div className="glass-card py-20 text-center text-white/50">
+              <Sparkles className="w-12 h-12 mx-auto mb-3 text-accent-gold/50" />
+              <p>当前没有歌曲</p>
+              <p className="text-xs mt-1">点右上角"新增歌曲"即可 🎵</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filteredSongs.map((s) => (
+                <div
+                  key={`sg-${s.id}`}
+                  className={`glass-card p-3 md:p-4 flex flex-col md:flex-row md:items-center gap-3 transition-all hover:shadow-[0_0_30px_rgba(251,191,36,0.12)] ${
+                    songWorkId === s.id ? "opacity-60 pointer-events-none" : ""
+                  } ${s.status !== "available" ? "opacity-70" : ""}`}
+                >
+                  {/* 首字母 badge */}
+                  <div className="shrink-0 w-14 h-14 rounded-xl bg-gradient-to-br from-accent-violet/30 to-accent-blue/20 border border-white/10 flex items-center justify-center md:mr-1">
+                    <span className="font-display text-lg text-accent-gold font-mono">
+                      {(s.firstLetter || "?").slice(0, 3)}
+                    </span>
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <h3 className="font-semibold text-lg truncate">{s.title}</h3>
+                      <span className="text-xs text-white/50">— {s.artist}</span>
+                      <span className="inline-flex items-center gap-0.5 px-2 py-0.5 text-[10px] rounded-full bg-white/5 border border-white/10 text-white/60">
+                        {s.language}
+                      </span>
+                      <span className="inline-flex items-center gap-0.5 px-2 py-0.5 text-[10px] rounded-full bg-accent-violet/10 border border-accent-violet/20 text-accent-violet">
+                        {s.genre || "-"}
+                      </span>
+                      {s.status === "full" && (
+                        <span className="inline-flex items-center gap-0.5 px-2 py-0.5 text-[10px] rounded-full bg-amber-500/15 border border-amber-400/30 text-amber-300">
+                          排满
+                        </span>
+                      )}
+                      {s.status === "closed" && (
+                        <span className="inline-flex items-center gap-0.5 px-2 py-0.5 text-[10px] rounded-full bg-red-500/15 border border-red-400/30 text-red-300">
+                          关闭
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-white/45">
+                      <span>ID: {s.id}</span>
+                      {s.isPaid && <span className="text-accent-gold">· 需付费</span>}
+                      {s.hasClip && <span className="text-accent-violet">· 有 clip</span>}
+                      {s.remark && s.remark !== "-" && <span>· 备注：{s.remark}</span>}
+                      {s.bvLink && (
+                        <a
+                          href={s.bvLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-accent-blue hover:underline"
+                        >
+                          · 链接
+                        </a>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex md:flex-col items-center md:items-stretch gap-2 shrink-0">
+                    <button
+                      onClick={() => openEditSong(s)}
+                      className="px-3 py-2 rounded-xl inline-flex items-center gap-1.5 text-sm bg-accent-gold/20 border border-accent-gold/50 text-accent-gold hover:bg-accent-gold/30 transition"
+                    >
+                      <Pencil className="w-4 h-4" /> 编辑
+                    </button>
+                    <button
+                      onClick={() => deleteSong(s)}
+                      className="px-3 py-2 rounded-xl inline-flex items-center gap-1.5 text-sm bg-red-500/15 border border-red-400/40 text-red-300 hover:bg-red-500/25 transition"
+                    >
+                      <Trash2 className="w-4 h-4" /> 删除
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* 歌单编辑器弹窗 */}
+      {songEditorOpen && editingSong && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"
+          onClick={() => {
+            if (!savingSong) setSongEditorOpen(false);
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="song-editor-title"
+        >
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-md" />
+          <div
+            className="relative glass-card w-full max-w-2xl p-0 overflow-hidden animate-fade-in-up shadow-2xl shadow-accent-violet/20 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
           >
-            <ArrowLeft className="w-4 h-4" /> 回到点歌主页
-          </Link>
-          <button
-            onClick={() => {
-              sessionStorage.removeItem("dasy_admin_unlocked");
-              location.reload();
-            }}
-            className="ml-3 px-4 py-2 rounded-xl text-sm border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition"
-          >
-            🔒 退出后台（锁定密码）
-          </button>
+            <div className="h-1 w-full bg-gold-glow" />
+            <button
+              onClick={() => {
+                if (!savingSong) setSongEditorOpen(false);
+              }}
+              aria-label="关闭"
+              className="absolute right-3 top-3 z-10 p-2 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-all"
+              disabled={savingSong}
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <form
+              onSubmit={(e) => saveSong(e, true)}
+              className="p-6 space-y-4"
+            >
+              <div className="mb-2 text-center">
+                <h2
+                  id="song-editor-title"
+                  className="font-display text-2xl text-gradient-gold mb-1"
+                >
+                  {editingSong.id && songs.find((x) => x.id === editingSong.id)
+                    ? "编辑歌曲"
+                    : "新增歌曲"}
+                </h2>
+                <p className="text-xs text-white/50">
+                  保存后会立即同步到粉丝端歌单
+                </p>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-3">
+                <div className="md:col-span-2">
+                  <label className="text-xs text-white/60 mb-1 block">
+                    歌曲名 <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editingSong.title}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setEditingSong({ ...editingSong, title: val });
+                      // 如果首字母字段还空（或旧值为根据旧标题生成的猜测），自动更新猜测
+                      const currentGuess = guessFirstLetter(val);
+                      const oldGuess = guessFirstLetter(
+                        editingSong.title
+                      );
+                      if (
+                        !editingSong.firstLetter ||
+                        editingSong.firstLetter === oldGuess
+                      ) {
+                        setEditingSong((prev) => ({
+                          ...prev,
+                          title: val,
+                          firstLetter: currentGuess,
+                        }));
+                      }
+                    }}
+                    placeholder="例如：稻香"
+                    className="glass-input w-full"
+                    required
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-white/60 mb-1 block">
+                    歌手 <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editingSong.artist}
+                    onChange={(e) =>
+                      setEditingSong({ ...editingSong, artist: e.target.value })
+                    }
+                    placeholder="例如：周杰伦"
+                    className="glass-input w-full"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-white/60 mb-1 block">
+                    首字母（建议 3 位，仅 ASCII，会用于排序/筛选）
+                  </label>
+                  <input
+                    type="text"
+                    value={editingSong.firstLetter}
+                    onChange={(e) =>
+                      setEditingSong({
+                        ...editingSong,
+                        firstLetter: e.target.value.toUpperCase(),
+                      })
+                    }
+                    placeholder="例如：DX、OJM"
+                    className="glass-input w-full font-mono uppercase tracking-wider"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-white/60 mb-1 block">
+                    语言
+                  </label>
+                  <select
+                    value={editingSong.language}
+                    onChange={(e) =>
+                      setEditingSong({
+                        ...editingSong,
+                        language: e.target.value as Language,
+                      })
+                    }
+                    className="glass-input w-full"
+                  >
+                    {LANGUAGES.map((l) => (
+                      <option key={l} value={l}>{l}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-white/60 mb-1 block">
+                    分类
+                  </label>
+                  <input
+                    type="text"
+                    value={editingSong.genre}
+                    onChange={(e) =>
+                      setEditingSong({ ...editingSong, genre: e.target.value })
+                    }
+                    list="genre-suggest"
+                    placeholder="流行 / 术曲 / 古风..."
+                    className="glass-input w-full"
+                  />
+                  <datalist id="genre-suggest">
+                    {DEFAULT_GENRES.map((g) => (
+                      <option key={g} value={g} />
+                    ))}
+                  </datalist>
+                </div>
+                <div>
+                  <label className="text-xs text-white/60 mb-1 block">
+                    可点状态
+                  </label>
+                  <select
+                    value={editingSong.status}
+                    onChange={(e) =>
+                      setEditingSong({
+                        ...editingSong,
+                        status: e.target.value as SongStatus,
+                      })
+                    }
+                    className="glass-input w-full"
+                  >
+                    <option value="available">可点（available）</option>
+                    <option value="full">排满（full）</option>
+                    <option value="closed">关闭（closed）</option>
+                  </select>
+                </div>
+                <div className="md:col-span-2 grid grid-cols-2 gap-3">
+                  <label className="flex items-center gap-2 cursor-pointer select-none p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/[0.08] transition">
+                    <input
+                      type="checkbox"
+                      checked={editingSong.isPaid}
+                      onChange={(e) =>
+                        setEditingSong({
+                          ...editingSong,
+                          isPaid: e.target.checked,
+                        })
+                      }
+                      className="w-4 h-4 accent-accent-gold"
+                    />
+                    <span className="text-sm text-white/80">需付费点唱</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer select-none p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/[0.08] transition">
+                    <input
+                      type="checkbox"
+                      checked={editingSong.hasClip}
+                      onChange={(e) =>
+                        setEditingSong({
+                          ...editingSong,
+                          hasClip: e.target.checked,
+                        })
+                      }
+                      className="w-4 h-4 accent-accent-violet"
+                    />
+                    <span className="text-sm text-white/80">有 clip</span>
+                  </label>
+                </div>
+                <div>
+                  <label className="text-xs text-white/60 mb-1 block">
+                    ID（唯一主键，保存后不可改）
+                  </label>
+                  <input
+                    type="number"
+                    value={editingSong.id}
+                    onChange={(e) =>
+                      setEditingSong({
+                        ...editingSong,
+                        id: Number(e.target.value) || 0,
+                      })
+                    }
+                    disabled={!!songs.find((x) => x.id === editingSong.id)}
+                    className="glass-input w-full font-mono disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-white/60 mb-1 block">
+                    B 站链接（可选，BV 链接）
+                  </label>
+                  <input
+                    type="text"
+                    value={editingSong.bvLink || ""}
+                    onChange={(e) =>
+                      setEditingSong({
+                        ...editingSong,
+                        bvLink: e.target.value.trim() || undefined,
+                      })
+                    }
+                    placeholder="https://www.bilibili.com/video/..."
+                    className="glass-input w-full"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-white/60 mb-1 block">
+                    备注
+                  </label>
+                  <input
+                    type="text"
+                    value={editingSong.remark}
+                    onChange={(e) =>
+                      setEditingSong({ ...editingSong, remark: e.target.value })
+                    }
+                    placeholder="特殊要求、时间限制等，不填保持 -"
+                    className="glass-input w-full"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => saveSong({ preventDefault() {} } as React.FormEvent, false)}
+                  disabled={savingSong}
+                  className="btn-secondary inline-flex items-center gap-1.5"
+                >
+                  <Save className="w-4 h-4" />
+                  保存并继续编辑
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingSong}
+                  className="btn-primary inline-flex items-center gap-1.5"
+                >
+                  {savingSong ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Check className="w-4 h-4" />
+                  )}
+                  {savingSong ? "保存中..." : "保存并关闭"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
+      )}
       </div>
     </div>
   );
