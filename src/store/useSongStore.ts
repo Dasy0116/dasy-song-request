@@ -134,34 +134,36 @@ export const useSongStore = create<SongStore>((set, get) => ({
           const { data, error } = await supabase
             .from("songs")
             .select("*");
-          if (!error && Array.isArray(data) && data.length > 0) {
+          if (!error && Array.isArray(data)) {
             const remoteMap = new Map<number, Song>();
             for (const row of data as Record<string, unknown>[]) {
               remoteMap.set(row.id as number, {
                 id: row.id as number,
                 title: row.title as string,
                 artist: row.artist as string,
-                language: row.language as Song["language"],
+                language: (row.language as Song["language"]) || "国语",
                 genre: (row.genre as string) || "",
                 firstLetter: (row.first_letter as string) || "",
                 isPaid: !!row.is_paid,
                 hasClip: !!row.has_clip,
-                remark: (row.remark as string) || "",
+                remark: (row.remark as string) || "-",
                 bvLink: (row.bv_link as string | undefined) || undefined,
                 status: (row.status as Song["status"]) || "available",
               });
             }
-            // 合并：本地 id 存在则覆盖，同时保留远程独有项
-            const idSet = new Set<number>();
-            const result: Song[] = [];
-            for (const s of localSongs) {
-              idSet.add(s.id);
-              result.push(remoteMap.get(s.id) || s);
+            if (remoteMap.size > 0) {
+              // 合并：远程覆盖本地同 id，远程独有项追加
+              const idSet = new Set<number>();
+              const result: Song[] = [];
+              for (const s of localSongs) {
+                idSet.add(s.id);
+                result.push(remoteMap.get(s.id) || s);
+              }
+              for (const [id, s] of remoteMap) {
+                if (!idSet.has(id)) result.push(s);
+              }
+              merged = result;
             }
-            for (const [id, s] of remoteMap) {
-              if (!idSet.has(id)) result.push(s);
-            }
-            merged = result;
           }
         } catch {
           // Supabase songs 表不存在或查询失败，静默忽略，只使用本地
@@ -507,10 +509,28 @@ export const useSongStore = create<SongStore>((set, get) => ({
     const { data, error } = await supabase
       .from("songs")
       .select("*")
-      .order("firstLetter", { ascending: true })
+      .order("first_letter", { ascending: true })
       .order("title", { ascending: true });
-    if (error) throw error;
-    return (data || []) as Song[];
+    if (error) {
+      console.error("[adminFetchSongs] Supabase error:", error);
+      throw new Error(
+        `数据库错误: ${error.message || JSON.stringify(error)} (code: ${error.code || "unknown"})`
+      );
+    }
+    // Supabase 返回 snake_case，手动映射成 Song 类型的 camelCase
+    return (data || []).map((row: Record<string, unknown>) => ({
+      id: row.id as number,
+      title: row.title as string,
+      artist: row.artist as string,
+      language: (row.language as Song["language"]) || "国语",
+      genre: (row.genre as string) || "",
+      firstLetter: (row.first_letter as string) || "",
+      isPaid: !!row.is_paid,
+      hasClip: !!row.has_clip,
+      remark: (row.remark as string) || "-",
+      bvLink: (row.bv_link as string | undefined) || undefined,
+      status: (row.status as Song["status"]) || "available",
+    }));
   },
 
   adminUpsertSong: async (song) => {
