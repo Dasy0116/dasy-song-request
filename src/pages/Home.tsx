@@ -15,15 +15,20 @@ import { useUserStore } from "@/store/useUserStore";
 export default function Home() {
   const fetchSongs = useSongStore((s) => s.fetchSongs);
   const refreshPointStatus = useSongStore((s) => s.refreshPointStatus);
+  const fetchLiveStatus = useSongStore((s) => s.fetchLiveStatus);
   const hydrateMyHistory = useSongStore((s) => s.hydrateMyHistory);
   const hydrate = useUserStore((s) => s.hydrate);
 
   useEffect(() => {
     fetchSongs();
     refreshPointStatus();
+    fetchLiveStatus();
     hydrateMyHistory();
     hydrate();
-  }, [fetchSongs, refreshPointStatus, hydrateMyHistory, hydrate]);
+    // 每 60 秒刷新直播状态（后台切换后粉丝端尽快感知）
+    const t = setInterval(() => fetchLiveStatus(), 60000);
+    return () => clearInterval(t);
+  }, [fetchSongs, refreshPointStatus, fetchLiveStatus, hydrateMyHistory, hydrate]);
 
   return (
     <div className="relative min-h-screen overflow-x-hidden">

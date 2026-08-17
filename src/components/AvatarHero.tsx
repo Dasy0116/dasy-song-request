@@ -1,4 +1,4 @@
-import { Home, Radio, UserCog } from "lucide-react";
+import { Home, Radio, UserCog, Circle } from "lucide-react";
 import { useSongStore } from "@/store/useSongStore";
 import { useUserStore } from "@/store/useUserStore";
 
@@ -6,6 +6,7 @@ export function AvatarHero() {
   const resetFilters = useSongStore((s) => s.resetFilters);
   const nickname = useUserStore((s) => s.nickname);
   const openEdit = useUserStore((s) => s.openEdit);
+  const isLive = useSongStore((s) => s.isLive);
 
   return (
     <section
@@ -39,13 +40,34 @@ export function AvatarHero() {
         <div className="w-36 h-36 md:w-44 md:h-44 rounded-full p-[3px] bg-violet-glow animate-breathe">
           <div className="w-full h-full rounded-full bg-wolf-900 p-1.5 overflow-hidden">
             <img
-              src="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=cool%20anime%20wolf%20vtuber%20avatar%20portrait%2C%20mysterious%20lone%20wolf%20with%20dark%20purple%20hood%2C%20golden%20glowing%20eyes%2C%20moonlight%20background%2C%20high%20quality%20digital%20art&image_size=square_hd"
+              src="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=cool%20anime%20wolf%20vtuber%20portrait%2C%20mysterious%20lone%20wolf%20with%20dark%20purple%20hood%2C%20golden%20glowing%20eyes%2C%20moonlight%20background%2C%20high%20quality%20digital%20art&image_size=square_hd"
               alt="Dasy独狼头像"
               className="w-full h-full w-full h-full object-cover rounded-full"
               loading="eager"
             />
           </div>
         </div>
+
+        {/* 直播状态徽标 */}
+        {isLive ? (
+          <a
+            href="https://live.bilibili.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="absolute -top-1 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-red-500/90 border border-red-300/40 shadow-lg shadow-red-500/40 flex items-center gap-1.5 text-[11px] font-bold text-white animate-fade-in"
+            title="直播中，点击进入直播间"
+          >
+            <Circle className="w-2 h-2 fill-white text-white animate-pulse" />
+            LIVE 直播中
+          </a>
+        ) : (
+          <div className="absolute -top-1 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-white/10 border border-white/20 flex items-center gap-1.5 text-[11px] text-white/60">
+            <Circle className="w-2 h-2 fill-white/40 text-white/40" />
+            休息中
+          </div>
+        )}
+
         {/* 月亮装饰 */}
         <div className="absolute -top-2 -right-2 w-10 h-10 rounded-full bg-accent-gold/90 shadow-glow-gold flex items-center justify-center text-xl rotate-12">
           🌙
@@ -102,10 +124,12 @@ export function AvatarHero() {
           href="https://live.bilibili.com/"
           target="_blank"
           rel="noopener noreferrer"
-          className="btn-primary relative overflow-hidden"
+          className={`btn-primary relative overflow-hidden ${
+            isLive ? "ring-2 ring-red-400/60" : ""
+          }`}
         >
           <Radio className="w-4 h-4" />
-          直播间
+          {isLive ? "进入直播间" : "直播间"}
           <span className="absolute inset-0 shine-effect animate-shine pointer-events-none" />
         </a>
       </div>

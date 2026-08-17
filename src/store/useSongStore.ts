@@ -5,6 +5,18 @@ import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 const MY_HISTORY_KEY = "dasy_my_history";
 const MY_HISTORY_MAX = 50;
 
+// 直播状态哨兵记录：复用 song_requests 表，固定 id 避免新建表
+const LIVE_RECORD_ID = "00000000-0000-0000-0000-000000000001";
+const LIVE_SENTINEL_SONG_ID = -1;
+const LIVE_SENTINEL_TITLE = "__LIVE_STATE__";
+
+function isLiveSentinel(r: { song_id?: number; song_title?: string }) {
+  return (
+    r.song_id === LIVE_SENTINEL_SONG_ID ||
+    r.song_title === LIVE_SENTINEL_TITLE
+  );
+}
+
 export interface MyHistoryItem {
   local_id: string;
   song_id: number;
@@ -49,6 +61,10 @@ interface SongStore extends FilterState {
   isMyHistoryOpen: boolean;
   // 打开"我的点歌"时，对每条历史查询 Supabase 最新状态的结果
   myHistoryStatus: Record<string, "pending" | "sung" | "deleted" | "unknown">;
+  // 直播状态
+  isLive: boolean;
+  liveUpdatedAt: string | null;
+  setLiveStatusLoading: boolean;
 
   // Actions
   fetchSongs: () => Promise<void>;
@@ -59,6 +75,8 @@ interface SongStore extends FilterState {
   removeMyHistory: (local_id: string) => void;
   setMyHistoryOpen: (open: boolean) => void;
   refreshMyHistoryStatus: () => Promise<void>;
+  fetchLiveStatus: () => Promise<void>;
+  setLiveStatus: (live: boolean) => Promise<void>;
   setFilter: <K extends FilterKey>(key: K, value: FilterState[K]) => void;
   resetFilters: () => void;
   setHighlighted: (id: number | null) => void;
@@ -73,10 +91,6 @@ interface SongStore extends FilterState {
   adminUpdateStatus: (id: string, status: SongRequest["status"]) => Promise<void>;
   adminDelete: (id: string) => Promise<void>;
   adminReorder: (id: string, direction: "up" | "down", list: SongRequest[]) => Promise<void>;
-  // 后台：歌单在线管理（Supabase songs 表 CRUD）
-  adminFetchSongs: () => Promise<Song[]>;
-  adminUpsertSong: (song: Song) => Promise<Song>;
-  adminDeleteSong: (id: number) => Promise<void>;
 }
 
 export const useSongStore = create<SongStore>((set, get) => ({
@@ -116,61 +130,19 @@ export const useSongStore = create<SongStore>((set, get) => ({
   myHistory: [],
   isMyHistoryOpen: false,
   myHistoryStatus: {},
+  // 直播状态
+  isLive: false,
+  liveUpdatedAt: null,
+  setLiveStatusLoading: false,
 
   fetchSongs: async () => {
     set({ isLoading: true, loadError: null });
     try {
-      // 1. 先拉本地 songs.json（总有），把 first_letter 等字段与 Supabase 对齐
       const url = `./songs.json?t=${Date.now()}`;
       const res = await fetch(url);
-      if (!res.ok) throw new Error(`本地歌单加载失败 HTTP ${res.status}`);
-      const localSongs: Song[] = await res.json();
-
-      let merged = localSongs;
-
-      // 2. 如果配置了 Supabase，尝试拉 songs 表，和本地合并（以 id 为准）
-      if (isSupabaseConfigured) {
-        try {
-          const { data, error } = await supabase
-            .from("songs")
-            .select("*");
-          if (!error && Array.isArray(data)) {
-            const remoteMap = new Map<number, Song>();
-            for (const row of data as Record<string, unknown>[]) {
-              remoteMap.set(row.id as number, {
-                id: row.id as number,
-                title: row.title as string,
-                artist: row.artist as string,
-                language: (row.language as Song["language"]) || "国语",
-                genre: (row.genre as string) || "",
-                firstLetter: (row.first_letter as string) || "",
-                isPaid: !!row.is_paid,
-                hasClip: !!row.has_clip,
-                remark: (row.remark as string) || "-",
-                bvLink: (row.bv_link as string | undefined) || undefined,
-                status: (row.status as Song["status"]) || "available",
-              });
-            }
-            if (remoteMap.size > 0) {
-              // 合并：远程覆盖本地同 id，远程独有项追加
-              const idSet = new Set<number>();
-              const result: Song[] = [];
-              for (const s of localSongs) {
-                idSet.add(s.id);
-                result.push(remoteMap.get(s.id) || s);
-              }
-              for (const [id, s] of remoteMap) {
-                if (!idSet.has(id)) result.push(s);
-              }
-              merged = result;
-            }
-          }
-        } catch {
-          // Supabase songs 表不存在或查询失败，静默忽略，只使用本地
-        }
-      }
-
-      set({ allSongs: merged, isLoading: false, loadError: null });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: Song[] = await res.json();
+      set({ allSongs: data, isLoading: false, loadError: null });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "未知错误";
       set({ isLoading: false, loadError: `歌单加载失败: ${msg}` });
@@ -189,7 +161,7 @@ export const useSongStore = create<SongStore>((set, get) => ({
     try {
       const { data, error } = await supabase
         .from("song_requests")
-        .select("id,song_id,song_title,song_artist,status,order_index,created_at")
+        .select("id,song_id,song_title,song_artist,status,order_index,created_at,updated_at,message")
         .order("created_at", { ascending: true });
       if (error) throw error;
 
@@ -201,14 +173,19 @@ export const useSongStore = create<SongStore>((set, get) => ({
         status: "pending" | "sung" | "deleted";
         order_index: number;
         created_at: string;
+        updated_at?: string;
+        message?: string;
       }[];
+
+      // 排除直播状态哨兵记录
+      const realRecords = records.filter((r) => !isLiveSentinel(r));
 
       // 按歌曲分组，找每首歌最新的一条记录
       const latestBySong = new Map<
         number,
         { status: string; created_at: string }
       >();
-      for (const r of records) {
+      for (const r of realRecords) {
         const prev = latestBySong.get(r.song_id);
         if (!prev || r.created_at > prev.created_at) {
           latestBySong.set(r.song_id, {
@@ -231,7 +208,7 @@ export const useSongStore = create<SongStore>((set, get) => ({
           };
         } else {
           // sung 或 deleted：数 created_at 之后有多少条记录
-          const laterCount = records.filter(
+          const laterCount = realRecords.filter(
             (r) => r.created_at > latest.created_at
           ).length;
           if (laterCount < 5) {
@@ -245,7 +222,7 @@ export const useSongStore = create<SongStore>((set, get) => ({
       }
 
       // 粉丝端可见队列：只 pending，按 order_index 升序，再按 created_at 升序
-      const fanQueue = records
+      const fanQueue = realRecords
         .filter((r) => r.status === "pending")
         .sort((a, b) =>
           a.order_index === b.order_index
@@ -261,7 +238,14 @@ export const useSongStore = create<SongStore>((set, get) => ({
           created_at: r.created_at,
         }));
 
-      set({ songPointStatus: statusMap, fanQueue });
+      // 顺便更新直播状态（从原 records 找哨兵记录）
+      const liveRec = records.find((r) => isLiveSentinel(r));
+      set({
+        songPointStatus: statusMap,
+        fanQueue,
+        isLive: liveRec?.message === "true",
+        liveUpdatedAt: liveRec?.updated_at || liveRec?.created_at || null,
+      });
     } catch (err) {
       console.warn("刷新点歌状态失败:", err);
       set({ songPointStatus: {}, fanQueue: [] });
@@ -306,6 +290,66 @@ export const useSongStore = create<SongStore>((set, get) => ({
   },
 
   setMyHistoryOpen: (open) => set({ isMyHistoryOpen: open }),
+
+  // ============ 直播状态 ============
+  fetchLiveStatus: async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const { data, error } = await supabase
+        .from("song_requests")
+        .select("message,updated_at,created_at")
+        .eq("id", LIVE_RECORD_ID)
+        .maybeSingle();
+      if (error) throw error;
+      if (data) {
+        set({
+          isLive: (data as { message?: string }).message === "true",
+          liveUpdatedAt:
+            (data as { updated_at?: string }).updated_at ||
+            (data as { created_at?: string }).created_at ||
+            null,
+        });
+      } else {
+        set({ isLive: false, liveUpdatedAt: null });
+      }
+    } catch (err) {
+      console.warn("拉取直播状态失败:", err);
+    }
+  },
+
+  setLiveStatus: async (live) => {
+    if (!isSupabaseConfigured) {
+      set({ isLive: live });
+      return;
+    }
+    set({ setLiveStatusLoading: true });
+    try {
+      const now = new Date().toISOString();
+      const payload = {
+        id: LIVE_RECORD_ID,
+        song_id: LIVE_SENTINEL_SONG_ID,
+        song_title: LIVE_SENTINEL_TITLE,
+        song_artist: "",
+        nickname: "__SYSTEM__",
+        message: live ? "true" : "false",
+        status: "pending",
+        order_index: -999,
+        created_at: now,
+        updated_at: now,
+      };
+      // upsert：如果不存在则插入，存在则更新
+      const { error } = await supabase
+        .from("song_requests")
+        .upsert(payload, { onConflict: "id" });
+      if (error) throw error;
+      set({ isLive: live, liveUpdatedAt: now });
+    } catch (err) {
+      console.error("切换直播状态失败:", err);
+      throw err;
+    } finally {
+      set({ setLiveStatusLoading: false });
+    }
+  },
 
   // 查询 myHistory 中每条记录对应 Supabase 最新状态
   refreshMyHistoryStatus: async () => {
@@ -460,7 +504,10 @@ export const useSongStore = create<SongStore>((set, get) => ({
       .order("order_index", { ascending: true })
       .order("created_at", { ascending: true });
     if (error) throw error;
-    return (data || []) as SongRequest[];
+    // 过滤掉直播状态哨兵记录，主播看不到这条
+    return ((data || []) as SongRequest[]).filter(
+      (r) => !isLiveSentinel(r)
+    );
   },
 
   adminUpdateStatus: async (id, status) => {
@@ -501,78 +548,5 @@ export const useSongStore = create<SongStore>((set, get) => ({
       .update({ order_index: aOrder, updated_at: new Date().toISOString() })
       .eq("id", b.id);
     if (e2) throw e2;
-  },
-
-  // ============ 后台：歌单管理（Supabase songs 表） ============
-  adminFetchSongs: async () => {
-    if (!isSupabaseConfigured) return [];
-    const { data, error } = await supabase
-      .from("songs")
-      .select("*")
-      .order("first_letter", { ascending: true })
-      .order("title", { ascending: true });
-    if (error) {
-      console.error("[adminFetchSongs] Supabase error:", error);
-      throw new Error(
-        `数据库错误: ${error.message || JSON.stringify(error)} (code: ${error.code || "unknown"})`
-      );
-    }
-    // Supabase 返回 snake_case，手动映射成 Song 类型的 camelCase
-    return (data || []).map((row: Record<string, unknown>) => ({
-      id: row.id as number,
-      title: row.title as string,
-      artist: row.artist as string,
-      language: (row.language as Song["language"]) || "国语",
-      genre: (row.genre as string) || "",
-      firstLetter: (row.first_letter as string) || "",
-      isPaid: !!row.is_paid,
-      hasClip: !!row.has_clip,
-      remark: (row.remark as string) || "-",
-      bvLink: (row.bv_link as string | undefined) || undefined,
-      status: (row.status as Song["status"]) || "available",
-    }));
-  },
-
-  adminUpsertSong: async (song) => {
-    if (!isSupabaseConfigured) throw new Error("Supabase 未配置");
-    const payload = {
-      id: song.id,
-      title: song.title,
-      artist: song.artist,
-      language: song.language,
-      genre: song.genre,
-      first_letter: song.firstLetter,
-      is_paid: song.isPaid,
-      has_clip: song.hasClip,
-      remark: song.remark,
-      bv_link: song.bvLink || null,
-      status: song.status,
-    };
-    const { data, error } = await supabase
-      .from("songs")
-      .upsert(payload, { onConflict: "id" })
-      .select()
-      .single();
-    if (error) throw error;
-    const row = data as Record<string, unknown>;
-    return {
-      id: row.id as number,
-      title: row.title as string,
-      artist: row.artist as string,
-      language: row.language as Song["language"],
-      genre: row.genre as string,
-      firstLetter: (row.first_letter as string) || "",
-      isPaid: !!row.is_paid,
-      hasClip: !!row.has_clip,
-      remark: (row.remark as string) || "",
-      bvLink: (row.bv_link as string | undefined) || undefined,
-      status: row.status as Song["status"],
-    };
-  },
-
-  adminDeleteSong: async (id) => {
-    if (!isSupabaseConfigured) return;
-    const { error } = await supabase.from("songs").delete().eq("id", id);
-    if (error) throw error;
   },
 }));
