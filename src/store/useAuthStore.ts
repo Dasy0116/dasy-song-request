@@ -2,10 +2,12 @@ import { create } from "zustand";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
-// 虚拟邮箱后缀：用户用昵称登录，内部转成 base64url(昵称)@dasy.local
+// 虚拟邮箱后缀：用户用昵称登录，内部转成 base64url(昵称)@example.com
 // Supabase Auth 默认按 email 唯一性约束，这样昵称自动唯一
 // 用 base64url 编码是因为中文/特殊字符不是合法邮箱用户名，会被 Supabase 拒绝
-const VIRTUAL_EMAIL_DOMAIN = "dasy.local";
+// 用 example.com 是 RFC 2606 保留域名，格式合法不会被 Supabase 邮箱校验拒绝
+// 邮箱已禁用验证邮件，example.com 不会真实投递，也不会和真实用户冲突（base64url 前缀唯一）
+const VIRTUAL_EMAIL_DOMAIN = "example.com";
 
 /** UTF-8 字符串 -> base64url（仅含 [A-Za-z0-9_-]，合法邮箱用户名） */
 function utf8ToBase64url(str: string): string {
