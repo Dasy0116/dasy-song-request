@@ -2,14 +2,25 @@ import { create } from "zustand";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
-// 虚拟邮箱后缀：用户用昵称登录，内部转成 昵称@dasy.local
+// 虚拟邮箱后缀：用户用昵称登录，内部转成 base64url(昵称)@dasy.local
 // Supabase Auth 默认按 email 唯一性约束，这样昵称自动唯一
+// 用 base64url 编码是因为中文/特殊字符不是合法邮箱用户名，会被 Supabase 拒绝
 const VIRTUAL_EMAIL_DOMAIN = "dasy.local";
 
-/** 把昵称转成虚拟邮箱 */
+/** UTF-8 字符串 -> base64url（仅含 [A-Za-z0-9_-]，合法邮箱用户名） */
+function utf8ToBase64url(str: string): string {
+  const bytes = new TextEncoder().encode(str);
+  let bin = "";
+  bytes.forEach((b) => (bin += String.fromCharCode(b)));
+  const b64 = btoa(bin);
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** 把昵称转成虚拟邮箱：base64url(昵称小写)@dasy.local
+ *  小写化是为了大小写不敏感（邮箱本地部分本就不区分大小写） */
 function nicknameToEmail(nickname: string): string {
-  // 去掉首尾空白，转小写，邮箱不区分大小写更稳妥
-  return `${nickname.trim().toLowerCase()}@${VIRTUAL_EMAIL_DOMAIN}`;
+  const lower = nickname.trim().toLowerCase();
+  return `${utf8ToBase64url(lower)}@${VIRTUAL_EMAIL_DOMAIN}`;
 }
 
 interface AuthState {
@@ -104,8 +115,31 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         throw error;
       }
 
+      // 触发器写入的 nickname 是 base64url 字符串（不可读），
+      // 这里立即把真实昵称覆盖写入 profiles（同时再校验一次唯一性，作为兜底）
+      if (data.user) {
+        const { error: upErr } = await supabase
+          .from("profiles")
+          .upsert({ id: data.user.id, nickname: trimmed }, { onConflict: "id" });
+        if (upErr) {
+          // 唯一约束冲突 = 极小概率的并发竞态
+          if (upErr.message.toLowerCase().includes("unique")) {
+            // 立即登出这个孤儿账号，让用户重试
+            await supabase.auth.signOut();
+            throw new Error("这个昵称刚刚被抢注啦，换一个试试~");
+          }
+          // 其它错误不阻塞流程，只打日志
+          console.warn("写入真实昵称失败（不影响注册）:", upErr);
+        }
+      }
+
       if (data.session) {
-        set({ session: data.session, user: data.user, isAuthModalOpen: false });
+        set({
+          session: data.session,
+          user: data.user,
+          nickname: trimmed,
+          isAuthModalOpen: false,
+        });
       } else {
         set({ isAuthModalOpen: false });
         alert("注册成功！但 Supabase 未直接返回会话，请重新登录。");
@@ -171,15 +205,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         .eq("id", user.id)
         .maybeSingle();
       if (error) throw error;
-      // 兜底：从虚拟邮箱前缀取昵称
+      // 优先：profiles.nickname（注册时已写入真实昵称）
+      // 兜底1：user_metadata.nickname（注册时附带）
+      // 兜底2：email 前缀（老数据，base64url 编码，最后才用）
+      const metaNick =
+        (user.user_metadata as { nickname?: string } | null)?.nickname ||
+        undefined;
       const nick =
         (data as { nickname?: string } | null)?.nickname ||
-        user.email?.split("@")[0] ||
+        metaNick ||
         "粉丝";
       set({ nickname: nick });
     } catch (err) {
       console.warn("拉取昵称失败:", err);
-      set({ nickname: user.email?.split("@")[0] || "粉丝" });
+      const metaNick =
+        (user.user_metadata as { nickname?: string } | null)?.nickname ||
+        "粉丝";
+      set({ nickname: metaNick });
     }
   },
 
