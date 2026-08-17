@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import {
   X,
-  Mail,
   Lock,
   User,
   LogIn,
@@ -25,20 +24,24 @@ export function AuthModal() {
   const clearError = useAuthStore((s) => s.clearAuthError);
   const user = useAuthStore((s) => s.user);
   const nickname = useAuthStore((s) => s.nickname);
+  const updateNickname = useAuthStore((s) => s.updateNickname);
 
   const [mode, setMode] = useState<Mode>("login");
-  const [email, setEmail] = useState("");
+  const [nicknameInput, setNicknameInput] = useState("");
   const [password, setPassword] = useState("");
-  const [signupNick, setSignupNick] = useState("");
   const [showPwd, setShowPwd] = useState(false);
   const [localErr, setLocalErr] = useState<string | null>(null);
+  const [editingNick, setEditingNick] = useState(false);
+  const [newNick, setNewNick] = useState("");
+  const [updatingNick, setUpdatingNick] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
-      setEmail("");
+      setNicknameInput("");
       setPassword("");
-      setSignupNick("");
       setLocalErr(null);
+      setEditingNick(false);
+      setNewNick("");
       clearError();
     }
   }, [isOpen, clearError]);
@@ -56,6 +59,25 @@ export function AuthModal() {
 
   // 已登录时显示账号信息
   if (user) {
+    const handleSaveNick = async () => {
+      const trimmed = newNick.trim();
+      if (!trimmed) {
+        setLocalErr("请输入新昵称");
+        return;
+      }
+      setUpdatingNick(true);
+      setLocalErr(null);
+      try {
+        await updateNickname(trimmed);
+        setEditingNick(false);
+        setNewNick("");
+      } catch (err) {
+        setLocalErr(err instanceof Error ? err.message : "修改失败");
+      } finally {
+        setUpdatingNick(false);
+      }
+    };
+
     return (
       <div
         className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"
@@ -89,16 +111,66 @@ export function AuthModal() {
 
             <div className="text-left bg-black/20 border border-white/5 rounded-xl p-4 mb-4 space-y-2">
               <div className="flex items-center gap-2 text-sm">
-                <Mail className="w-3.5 h-3.5 text-white/40" />
-                <span className="text-white/60">邮箱</span>
-                <span className="ml-auto text-white truncate">{user.email}</span>
-              </div>
-              <div className="flex items-center gap-2 text-sm">
                 <User className="w-3.5 h-3.5 text-white/40" />
                 <span className="text-white/60">昵称</span>
-                <span className="ml-auto text-white truncate">{nickname}</span>
+                <span className="ml-auto text-white truncate font-semibold">
+                  {nickname || "—"}
+                </span>
               </div>
             </div>
+
+            {editingNick ? (
+              <div className="mb-3 space-y-2">
+                <input
+                  type="text"
+                  value={newNick}
+                  onChange={(e) => setNewNick(e.target.value)}
+                  placeholder="输入新昵称"
+                  className="glass-input w-full px-3 py-2"
+                  maxLength={20}
+                  autoFocus
+                />
+                {localErr && (
+                  <div className="flex items-start gap-2 p-2 rounded-lg bg-red-500/10 border border-red-400/30 text-red-300 text-xs">
+                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                    <span>{localErr}</span>
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSaveNick}
+                    disabled={updatingNick}
+                    className="btn-primary flex-1 px-3 py-2 text-xs"
+                  >
+                    {updatingNick ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : null}
+                    保存
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingNick(false);
+                      setNewNick("");
+                      setLocalErr(null);
+                    }}
+                    className="px-3 py-2 text-xs rounded-lg border border-white/10 text-white/60 hover:text-white"
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setEditingNick(true);
+                  setNewNick(nickname || "");
+                  setLocalErr(null);
+                }}
+                className="w-full mb-3 px-4 py-2 rounded-xl text-xs border border-white/10 text-white/70 hover:bg-white/5 transition"
+              >
+                修改昵称
+              </button>
+            )}
 
             <button
               onClick={async () => {
@@ -119,8 +191,8 @@ export function AuthModal() {
     e.preventDefault();
     setLocalErr(null);
 
-    if (!email.trim()) {
-      setLocalErr("请输入邮箱");
+    if (!nicknameInput.trim()) {
+      setLocalErr("请输入昵称");
       return;
     }
     if (!password) {
@@ -131,16 +203,12 @@ export function AuthModal() {
       setLocalErr("密码至少 6 位");
       return;
     }
-    if (mode === "signup" && !signupNick.trim()) {
-      setLocalErr("请输入昵称");
-      return;
-    }
 
     try {
       if (mode === "login") {
-        await signIn(email.trim(), password);
+        await signIn(nicknameInput.trim(), password);
       } else {
-        await signUp(email.trim(), password, signupNick.trim());
+        await signUp(nicknameInput.trim(), password);
       }
     } catch {
       // 错误已存到 store.authError
@@ -189,29 +257,17 @@ export function AuthModal() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-3">
-            {mode === "signup" && (
-              <div className="relative">
-                <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-white/40" />
-                <input
-                  type="text"
-                  value={signupNick}
-                  onChange={(e) => setSignupNick(e.target.value)}
-                  placeholder="昵称（粉丝端展示）"
-                  className="glass-input w-full pl-9 pr-4"
-                  autoComplete="nickname"
-                  maxLength={20}
-                />
-              </div>
-            )}
             <div className="relative">
-              <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-white/40" />
+              <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-white/40" />
               <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="邮箱"
+                type="text"
+                value={nicknameInput}
+                onChange={(e) => setNicknameInput(e.target.value)}
+                placeholder={mode === "signup" ? "昵称（粉丝端展示，不可重复）" : "昵称"}
                 className="glass-input w-full pl-9 pr-4"
-                autoComplete="email"
+                autoComplete="username"
+                maxLength={20}
+                autoFocus
               />
             </div>
             <div className="relative">
