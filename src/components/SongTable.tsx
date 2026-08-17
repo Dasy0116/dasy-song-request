@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useSongFilter } from "@/hooks/useSongFilter";
 import { useSongStore } from "@/store/useSongStore";
 import type { Song } from "@/types";
-import { Music2, ExternalLink, Send, Inbox, Loader2, AlertCircle, RotateCw } from "lucide-react";
+import { Music2, ExternalLink, Send, Inbox, Loader2, AlertCircle, RotateCw, Heart } from "lucide-react";
 
 const statusText: Record<Song["status"], string> = {
   available: "可点",
@@ -25,6 +25,8 @@ function SongRow({ song, index }: SongRowProps) {
   const highlightedSongId = useSongStore((s) => s.highlightedSongId);
   const openRequestModal = useSongStore((s) => s.openRequestModal);
   const pointStatus = useSongStore((s) => s.songPointStatus[song.id]);
+  const isFav = useSongStore((s) => s.favorites.includes(song.id));
+  const toggleFav = useSongStore((s) => s.toggleFavorite);
 
   const isHighlighted = highlightedSongId === song.id;
   const isDisabled = song.status !== "available";
@@ -112,6 +114,17 @@ function SongRow({ song, index }: SongRowProps) {
               <ExternalLink className="w-3.5 h-3.5" />
             </a>
           )}
+          <button
+            onClick={() => toggleFav(song.id)}
+            title={isFav ? "取消收藏" : "收藏"}
+            className={`p-1.5 rounded-full transition-all border ${
+              isFav
+                ? "bg-pink-500/20 text-pink-400 border-pink-400/40 hover:bg-pink-500/30"
+                : "bg-white/5 text-white/40 border-white/10 hover:text-pink-400 hover:bg-pink-500/10"
+            }`}
+          >
+            <Heart className={`w-3.5 h-3.5 ${isFav ? "fill-pink-400" : ""}`} />
+          </button>
           <button
             onClick={() => openRequestModal(song)}
             disabled={buttonDisabled}

@@ -15,6 +15,7 @@ import {
   Loader2,
   AlertCircle,
   RotateCw,
+  Heart,
 } from "lucide-react";
 
 const statusText: Record<Song["status"], string> = {
@@ -38,6 +39,8 @@ function MobileSongCard({ song, index }: CardProps) {
   const highlightedSongId = useSongStore((s) => s.highlightedSongId);
   const openRequestModal = useSongStore((s) => s.openRequestModal);
   const pointStatus = useSongStore((s) => s.songPointStatus[song.id]);
+  const isFav = useSongStore((s) => s.favorites.includes(song.id));
+  const toggleFav = useSongStore((s) => s.toggleFavorite);
 
   const isHighlighted = highlightedSongId === song.id;
   const isDisabled = song.status !== "available";
@@ -126,6 +129,17 @@ function MobileSongCard({ song, index }: CardProps) {
               <ExternalLink className="w-4 h-4" />
             </a>
           )}
+          <button
+            onClick={() => toggleFav(song.id)}
+            title={isFav ? "取消收藏" : "收藏"}
+            className={`p-2 rounded-full transition-all border ${
+              isFav
+                ? "bg-pink-500/20 text-pink-400 border-pink-400/40 hover:bg-pink-500/30"
+                : "bg-white/5 text-white/40 border-white/10 hover:text-pink-400 hover:bg-pink-500/10"
+            }`}
+          >
+            <Heart className={`w-4 h-4 ${isFav ? "fill-pink-400" : ""}`} />
+          </button>
         </div>
         <button
           onClick={() => openRequestModal(song)}

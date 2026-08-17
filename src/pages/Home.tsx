@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { StarBackground } from "@/components/StarBackground";
 import { AvatarHero } from "@/components/AvatarHero";
 import { FilterBar } from "@/components/FilterBar";
@@ -9,26 +9,56 @@ import { SuccessToast } from "@/components/SuccessToast";
 import { NicknameModal } from "@/components/NicknameModal";
 import { FanQueuePanel, FanQueueTrigger } from "@/components/FanQueuePanel";
 import { MyHistoryPanel, MyHistoryTrigger } from "@/components/MyHistoryPanel";
+import { FavoritesPanel, FavoritesTrigger } from "@/components/FavoritesPanel";
+import { AuthModal } from "@/components/AuthModal";
 import { useSongStore } from "@/store/useSongStore";
 import { useUserStore } from "@/store/useUserStore";
+import { useAuthStore } from "@/store/useAuthStore";
 
 export default function Home() {
   const fetchSongs = useSongStore((s) => s.fetchSongs);
   const refreshPointStatus = useSongStore((s) => s.refreshPointStatus);
   const fetchLiveStatus = useSongStore((s) => s.fetchLiveStatus);
   const hydrateMyHistory = useSongStore((s) => s.hydrateMyHistory);
+  const hydrateFavorites = useSongStore((s) => s.hydrateFavorites);
+  const onUserLogin = useSongStore((s) => s.onUserLogin);
   const hydrate = useUserStore((s) => s.hydrate);
+
+  // 初始化 Supabase Auth session 监听
+  const initAuth = useAuthStore((s) => s.init);
+  const authUser = useAuthStore((s) => s.user);
+  const authInited = useRef(false);
 
   useEffect(() => {
     fetchSongs();
     refreshPointStatus();
     fetchLiveStatus();
     hydrateMyHistory();
+    hydrateFavorites();
     hydrate();
     // 每 60 秒刷新直播状态（后台切换后粉丝端尽快感知）
     const t = setInterval(() => fetchLiveStatus(), 60000);
     return () => clearInterval(t);
-  }, [fetchSongs, refreshPointStatus, fetchLiveStatus, hydrateMyHistory, hydrate]);
+  }, [fetchSongs, refreshPointStatus, fetchLiveStatus, hydrateMyHistory, hydrateFavorites, hydrate]);
+
+  // 初始化 auth 监听（仅一次）
+  useEffect(() => {
+    if (authInited.current) return;
+    authInited.current = true;
+    const unsub = initAuth();
+    return unsub;
+  }, [initAuth]);
+
+  // 用户登录状态变化时，触发云端数据加载
+  const prevUserRef = useRef<typeof authUser>(null);
+  useEffect(() => {
+    const prev = prevUserRef.current;
+    if (authUser && !prev) {
+      // 从未登录 → 已登录
+      onUserLogin();
+    }
+    prevUserRef.current = authUser;
+  }, [authUser, onUserLogin]);
 
   return (
     <div className="relative min-h-screen overflow-x-hidden">
@@ -63,13 +93,16 @@ export default function Home() {
       {/* 弹窗 & Toast */}
       <RequestModal />
       <NicknameModal />
+      <AuthModal />
       {/* 左上角浮层按钮组 */}
-      <div className="fixed top-4 left-4 z-40 flex items-center gap-2">
+      <div className="fixed top-4 left-4 z-40 flex items-center gap-2 flex-wrap max-w-[60vw]">
         <FanQueueTrigger />
         <MyHistoryTrigger />
+        <FavoritesTrigger />
       </div>
       <FanQueuePanel />
       <MyHistoryPanel />
+      <FavoritesPanel />
       <SuccessToast />
     </div>
   );

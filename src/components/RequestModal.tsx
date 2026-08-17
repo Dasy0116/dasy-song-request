@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useSongStore } from "@/store/useSongStore";
 import { useUserStore } from "@/store/useUserStore";
+import { useAuthStore } from "@/store/useAuthStore";
 
 export function RequestModal() {
   const isOpen = useSongStore((s) => s.isRequestModalOpen);
@@ -20,7 +21,15 @@ export function RequestModal() {
   const submitting = useSongStore((s) => s.submittingRequest);
   const errorToast = useSongStore((s) => s.errorToast);
 
-  const savedNickname = useUserStore((s) => s.nickname);
+  const localNick = useUserStore((s) => s.nickname);
+  const setLocalNick = useUserStore((s) => s.setNickname);
+  // 已登录用户优先用云端昵称，且不可在弹窗里改（要去账号设置改）
+  const authUser = useAuthStore((s) => s.user);
+  const authNick = useAuthStore((s) => s.nickname);
+  const updateAuthNick = useAuthStore((s) => s.updateNickname);
+
+  const isLoggedIn = !!authUser;
+  const savedNickname = isLoggedIn ? authNick || "" : localNick || "";
 
   const [nickname, setNickname] = useState("");
   const [message, setMessage] = useState("");
@@ -54,9 +63,17 @@ export function RequestModal() {
       setErrors({ nickname: "请先填写你的昵称呀~" });
       return;
     }
-    // 同步保存昵称，下次自动带上
+    // 同步保存昵称：登录用户存云端，未登录用户存 localStorage
     if (trimmedNick !== savedNickname) {
-      useUserStore.getState().setNickname(trimmedNick);
+      if (isLoggedIn) {
+        try {
+          await updateAuthNick(trimmedNick);
+        } catch (err) {
+          console.warn("更新云端昵称失败:", err);
+        }
+      } else {
+        setLocalNick(trimmedNick);
+      }
     }
     await submitRequest({
       nickname: trimmedNick,

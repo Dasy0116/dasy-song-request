@@ -1,12 +1,23 @@
-import { Home, Radio, UserCog, Circle } from "lucide-react";
+import { Home, Radio, UserCog, Circle, LogIn, LogOut } from "lucide-react";
 import { useSongStore } from "@/store/useSongStore";
 import { useUserStore } from "@/store/useUserStore";
+import { useAuthStore } from "@/store/useAuthStore";
 
 export function AvatarHero() {
   const resetFilters = useSongStore((s) => s.resetFilters);
-  const nickname = useUserStore((s) => s.nickname);
+  const localNick = useUserStore((s) => s.nickname);
   const openEdit = useUserStore((s) => s.openEdit);
   const isLive = useSongStore((s) => s.isLive);
+
+  // 登录状态
+  const user = useAuthStore((s) => s.user);
+  const authNick = useAuthStore((s) => s.nickname);
+  const setAuthModalOpen = useAuthStore((s) => s.setAuthModalOpen);
+  const signOut = useAuthStore((s) => s.signOut);
+  const onUserLogout = useSongStore((s) => s.onUserLogout);
+
+  const isLoggedIn = !!user;
+  const displayNick = isLoggedIn ? authNick || "已登录" : localNick;
 
   return (
     <section
@@ -14,22 +25,66 @@ export function AvatarHero() {
       onClick={resetFilters}
       role="banner"
     >
-      {/* 右上角：昵称/修改入口 */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          openEdit();
-        }}
-        className="fixed top-4 right-4 z-40 glass-card px-3 py-2 flex items-center gap-1.5 text-xs text-white/80 hover:text-white hover:bg-white/10 transition-all"
-        title="设置或修改昵称"
-      >
-        <UserCog className="w-3.5 h-3.5 text-accent-gold" />
-        {nickname ? (
-          <span className="max-w-[120px] truncate">{nickname}</span>
+      {/* 右上角：登录/账号入口 */}
+      <div className="fixed top-4 right-4 z-40 flex items-center gap-2">
+        {isLoggedIn ? (
+          <>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setAuthModalOpen(true);
+              }}
+              className="glass-card px-3 py-2 flex items-center gap-1.5 text-xs text-white/90 hover:text-white hover:bg-white/10 transition-all"
+              title="账号信息（点击查看 / 退出登录）"
+            >
+              <UserCog className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="max-w-[120px] truncate">{displayNick}</span>
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (confirm("确定退出登录？")) {
+                  signOut();
+                  onUserLogout();
+                }
+              }}
+              className="glass-card px-2.5 py-2 flex items-center gap-1 text-xs text-white/60 hover:text-red-300 hover:bg-red-500/10 transition-all"
+              title="退出登录"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          </>
         ) : (
-          <span className="text-white/50">设置昵称</span>
+          <>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                openEdit();
+              }}
+              className="glass-card px-3 py-2 flex items-center gap-1.5 text-xs text-white/80 hover:text-white hover:bg-white/10 transition-all"
+              title="设置本地昵称（未登录）"
+            >
+              <UserCog className="w-3.5 h-3.5 text-accent-gold" />
+              {localNick ? (
+                <span className="max-w-[100px] truncate">{localNick}</span>
+              ) : (
+                <span className="text-white/50">设置昵称</span>
+              )}
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setAuthModalOpen(true);
+              }}
+              className="glass-card px-3 py-2 flex items-center gap-1.5 text-xs text-accent-gold hover:bg-accent-gold/10 transition-all border border-accent-gold/30"
+              title="登录/注册账号（跨设备同步）"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              登录
+            </button>
+          </>
         )}
-      </button>
+      </div>
       {/* 装饰性光晕 */}
       <div className="absolute top-10 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-accent-violet/20 blur-[120px] rounded-full pointer-events-none" />
       <div className="absolute top-20 right-[20%] w-64 h-64 bg-accent-blue/15 blur-[80px] rounded-full pointer-events-none" />

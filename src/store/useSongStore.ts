@@ -1,9 +1,11 @@
 import { create } from "zustand";
 import type { Song, SongRequest, FilterKey, FilterState } from "@/types";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { useAuthStore } from "@/store/useAuthStore";
 
 const MY_HISTORY_KEY = "dasy_my_history";
 const MY_HISTORY_MAX = 50;
+const FAVORITES_KEY = "dasy_favorites";
 
 // 直播状态哨兵记录：复用 song_requests 表，固定 id 避免新建表
 const LIVE_RECORD_ID = "00000000-0000-0000-0000-000000000001";
@@ -56,11 +58,14 @@ interface SongStore extends FilterState {
     created_at: string;
   }>;
   isFanQueueOpen: boolean;
-  // 本设备点歌历史（localStorage 持久化）
+  // 本设备点歌历史（登录后从云端拉取，未登录时用 localStorage）
   myHistory: MyHistoryItem[];
   isMyHistoryOpen: boolean;
   // 打开"我的点歌"时，对每条历史查询 Supabase 最新状态的结果
   myHistoryStatus: Record<string, "pending" | "sung" | "deleted" | "unknown">;
+  // 收藏（登录后从云端拉取，未登录时用 localStorage）
+  favorites: number[]; // song_id 数组
+  isFavoritesOpen: boolean;
   // 直播状态
   isLive: boolean;
   liveUpdatedAt: string | null;
@@ -71,10 +76,18 @@ interface SongStore extends FilterState {
   refreshPointStatus: () => Promise<void>;
   setFanQueueOpen: (open: boolean) => void;
   hydrateMyHistory: () => void;
-  addMyHistory: (item: Omit<MyHistoryItem, "local_id" | "created_at">) => void;
-  removeMyHistory: (local_id: string) => void;
+  addMyHistory: (item: Omit<MyHistoryItem, "local_id" | "created_at">) => Promise<void>;
+  removeMyHistory: (local_id: string) => Promise<void>;
   setMyHistoryOpen: (open: boolean) => void;
   refreshMyHistoryStatus: () => Promise<void>;
+  // 登录/登出时调用
+  onUserLogin: () => Promise<void>;
+  onUserLogout: () => void;
+  // 收藏
+  hydrateFavorites: () => void;
+  toggleFavorite: (songId: number) => Promise<void>;
+  isFavorite: (songId: number) => boolean;
+  setFavoritesOpen: (open: boolean) => void;
   fetchLiveStatus: () => Promise<void>;
   setLiveStatus: (live: boolean) => Promise<void>;
   setFilter: <K extends FilterKey>(key: K, value: FilterState[K]) => void;
@@ -130,6 +143,9 @@ export const useSongStore = create<SongStore>((set, get) => ({
   myHistory: [],
   isMyHistoryOpen: false,
   myHistoryStatus: {},
+  // 收藏
+  favorites: [],
+  isFavoritesOpen: false,
   // 直播状态
   isLive: false,
   liveUpdatedAt: null,
@@ -254,8 +270,13 @@ export const useSongStore = create<SongStore>((set, get) => ({
 
   setFanQueueOpen: (open) => set({ isFanQueueOpen: open }),
 
-  // ============ 我的点歌历史（本地） ============
+  // ============ 我的点歌历史（本地 + 云端同步） ============
   hydrateMyHistory: () => {
+    const { user } = useAuthStore.getState();
+    if (user) {
+      // 已登录：从云端拉取（onUserLogin 会做）
+      return;
+    }
     if (get().myHistory.length > 0) return;
     try {
       const raw = localStorage.getItem(MY_HISTORY_KEY);
@@ -268,7 +289,8 @@ export const useSongStore = create<SongStore>((set, get) => ({
     }
   },
 
-  addMyHistory: (item) => {
+  addMyHistory: async (item) => {
+    const { user } = useAuthStore.getState();
     const full: MyHistoryItem = {
       ...item,
       local_id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -276,20 +298,268 @@ export const useSongStore = create<SongStore>((set, get) => ({
     };
     const next = [full, ...get().myHistory].slice(0, MY_HISTORY_MAX);
     set({ myHistory: next });
-    try {
-      localStorage.setItem(MY_HISTORY_KEY, JSON.stringify(next));
-    } catch {}
+
+    if (user) {
+      // 已登录：写入云端
+      try {
+        const { data, error } = await supabase
+          .from("my_history")
+          .insert({
+            user_id: user.id,
+            song_id: item.song_id,
+            song_title: item.song_title,
+            song_artist: item.song_artist,
+            nickname: item.nickname,
+            message: item.message,
+          })
+          .select("id")
+          .single();
+        if (error) throw error;
+        // 用云端返回的 id 替换 local_id（便于后续删除）
+        if (data) {
+          const updated = get().myHistory.map((h) =>
+            h.local_id === full.local_id
+              ? { ...h, local_id: (data as { id: string }).id }
+              : h
+          );
+          set({ myHistory: updated });
+        }
+      } catch (err) {
+        console.warn("云端写入历史失败:", err);
+      }
+    } else {
+      // 未登录：写 localStorage
+      try {
+        localStorage.setItem(MY_HISTORY_KEY, JSON.stringify(next));
+      } catch {}
+    }
   },
 
-  removeMyHistory: (local_id) => {
+  removeMyHistory: async (local_id) => {
+    const { user } = useAuthStore.getState();
     const next = get().myHistory.filter((x) => x.local_id !== local_id);
     set({ myHistory: next });
-    try {
-      localStorage.setItem(MY_HISTORY_KEY, JSON.stringify(next));
-    } catch {}
+
+    if (user) {
+      // 已登录：local_id 是云端 uuid
+      try {
+        await supabase.from("my_history").delete().eq("id", local_id);
+      } catch (err) {
+        console.warn("云端删除历史失败:", err);
+      }
+    } else {
+      try {
+        localStorage.setItem(MY_HISTORY_KEY, JSON.stringify(next));
+      } catch {}
+    }
   },
 
   setMyHistoryOpen: (open) => set({ isMyHistoryOpen: open }),
+
+  // ============ 登录/登出钩子 ============
+  onUserLogin: async () => {
+    const { user } = useAuthStore.getState();
+    if (!user) return;
+
+    // 1. 拉取云端 my_history
+    try {
+      const { data, error } = await supabase
+        .from("my_history")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(MY_HISTORY_MAX);
+      if (error) throw error;
+      const cloudHistory: MyHistoryItem[] = ((data || []) as Array<{
+        id: string;
+        song_id: number;
+        song_title: string;
+        song_artist: string;
+        nickname: string | null;
+        message: string | null;
+        created_at: string;
+      }>).map((r) => ({
+        local_id: r.id,
+        song_id: r.song_id,
+        song_title: r.song_title,
+        song_artist: r.song_artist,
+        nickname: r.nickname || "",
+        message: r.message || "",
+        created_at: r.created_at,
+      }));
+      set({ myHistory: cloudHistory });
+
+      // 2. 迁移本地未同步的历史到云端
+      try {
+        const raw = localStorage.getItem(MY_HISTORY_KEY);
+        if (raw) {
+          const localArr = JSON.parse(raw) as MyHistoryItem[];
+          if (Array.isArray(localArr) && localArr.length > 0) {
+            // 把本地记录（local_id 以 "local_" 开头）批量插入云端
+            const toMigrate = localArr.filter((h) =>
+              h.local_id.startsWith("local_")
+            );
+            if (toMigrate.length > 0) {
+              const rows = toMigrate.map((h) => ({
+                user_id: user.id,
+                song_id: h.song_id,
+                song_title: h.song_title,
+                song_artist: h.song_artist,
+                nickname: h.nickname,
+                message: h.message,
+                created_at: h.created_at,
+              }));
+              await supabase.from("my_history").insert(rows);
+              // 迁移成功后清掉本地缓存
+              localStorage.removeItem(MY_HISTORY_KEY);
+              // 再次拉取合并后的列表
+              const { data: data2 } = await supabase
+                .from("my_history")
+                .select("*")
+                .eq("user_id", user.id)
+                .order("created_at", { ascending: false })
+                .limit(MY_HISTORY_MAX);
+              if (data2) {
+                const merged: MyHistoryItem[] = (data2 as Array<{
+                  id: string;
+                  song_id: number;
+                  song_title: string;
+                  song_artist: string;
+                  nickname: string | null;
+                  message: string | null;
+                  created_at: string;
+                }>).map((r) => ({
+                  local_id: r.id,
+                  song_id: r.song_id,
+                  song_title: r.song_title,
+                  song_artist: r.song_artist,
+                  nickname: r.nickname || "",
+                  message: r.message || "",
+                  created_at: r.created_at,
+                }));
+                set({ myHistory: merged });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("迁移本地历史失败:", e);
+      }
+    } catch (err) {
+      console.warn("拉取云端历史失败:", err);
+    }
+
+    // 3. 拉取云端 favorites
+    try {
+      const { data, error } = await supabase
+        .from("favorites")
+        .select("song_id")
+        .eq("user_id", user.id);
+      if (error) throw error;
+      const favIds = ((data || []) as Array<{ song_id: number }>).map(
+        (r) => r.song_id
+      );
+      set({ favorites: favIds });
+
+      // 4. 迁移本地 favorites
+      try {
+        const raw = localStorage.getItem(FAVORITES_KEY);
+        if (raw) {
+          const localFavs = JSON.parse(raw) as number[];
+          if (Array.isArray(localFavs) && localFavs.length > 0) {
+            const toAdd = localFavs.filter((id) => !favIds.includes(id));
+            if (toAdd.length > 0) {
+              const rows = toAdd.map((song_id) => ({
+                user_id: user.id,
+                song_id,
+              }));
+              await supabase.from("favorites").insert(rows);
+              localStorage.removeItem(FAVORITES_KEY);
+              set({ favorites: [...favIds, ...toAdd] });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("迁移本地收藏失败:", e);
+      }
+    } catch (err) {
+      console.warn("拉取云端收藏失败:", err);
+    }
+  },
+
+  onUserLogout: () => {
+    // 清空云端状态，回退到 localStorage（重新 hydrate）
+    set({ myHistory: [], favorites: [], myHistoryStatus: {} });
+    // 重新从 localStorage 加载本地数据
+    try {
+      const raw = localStorage.getItem(MY_HISTORY_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw) as MyHistoryItem[];
+        if (Array.isArray(arr)) set({ myHistory: arr });
+      }
+    } catch {}
+    try {
+      const raw = localStorage.getItem(FAVORITES_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw) as number[];
+        if (Array.isArray(arr)) set({ favorites: arr });
+      }
+    } catch {}
+  },
+
+  // ============ 收藏 ============
+  hydrateFavorites: () => {
+    const { user } = useAuthStore.getState();
+    if (user) return; // 已登录由 onUserLogin 拉取
+    if (get().favorites.length > 0) return;
+    try {
+      const raw = localStorage.getItem(FAVORITES_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw) as number[];
+        if (Array.isArray(arr)) set({ favorites: arr });
+      }
+    } catch {}
+  },
+
+  toggleFavorite: async (songId) => {
+    const { user } = useAuthStore.getState();
+    const cur = get().favorites;
+    const has = cur.includes(songId);
+    const next = has
+      ? cur.filter((x) => x !== songId)
+      : [...cur, songId];
+    set({ favorites: next });
+
+    if (user) {
+      try {
+        if (has) {
+          await supabase
+            .from("favorites")
+            .delete()
+            .eq("user_id", user.id)
+            .eq("song_id", songId);
+        } else {
+          await supabase.from("favorites").insert({
+            user_id: user.id,
+            song_id: songId,
+          });
+        }
+      } catch (err) {
+        // 回滚
+        set({ favorites: cur });
+        console.warn("收藏同步失败:", err);
+        throw err;
+      }
+    } else {
+      try {
+        localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
+      } catch {}
+    }
+  },
+
+  isFavorite: (songId) => get().favorites.includes(songId),
+
+  setFavoritesOpen: (open) => set({ isFavoritesOpen: open }),
 
   // ============ 直播状态 ============
   fetchLiveStatus: async () => {
@@ -472,8 +742,8 @@ export const useSongStore = create<SongStore>((set, get) => ({
         successToast: `🐺 点歌成功！已为「${nickname}」登记《${selectedSong.title}》`,
       });
       setTimeout(() => set({ successToast: null }), 4000);
-      // 写入本地"我的点歌"历史
-      get().addMyHistory({
+      // 写入"我的点歌"历史（登录则同步云端，未登录走 localStorage）
+      void get().addMyHistory({
         song_id: selectedSong.id,
         song_title: selectedSong.title,
         song_artist: selectedSong.artist,
