@@ -7,6 +7,7 @@ import { SongCard } from "@/components/SongCard";
 import { RequestModal } from "@/components/RequestModal";
 import { SuccessToast } from "@/components/SuccessToast";
 import { NicknameModal } from "@/components/NicknameModal";
+import { FanQueuePanel, FanQueueTrigger } from "@/components/FanQueuePanel";
 import { useSongStore } from "@/store/useSongStore";
 import { useUserStore } from "@/store/useUserStore";
 
@@ -54,6 +55,8 @@ export default function Home() {
       {/* 弹窗 & Toast */}
       <RequestModal />
       <NicknameModal />
+      <FanQueueTrigger />
+      <FanQueuePanel />
       <SuccessToast />
     </div>
   );

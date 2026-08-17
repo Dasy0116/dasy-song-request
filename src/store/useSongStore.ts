@@ -21,10 +21,21 @@ interface SongStore extends FilterState {
   submittingRequest: boolean;
   // 每首歌的点歌可点状态：{ [songId]: { disabled, reason? } }
   songPointStatus: Record<number, { disabled: boolean; reason?: string }>;
+  // 粉丝端可见的点唱队列（仅 pending，按 order_index 排序，不含昵称/留言）
+  fanQueue: Array<{
+    id: string;
+    song_id: number;
+    song_title: string;
+    song_artist: string;
+    order_index: number;
+    created_at: string;
+  }>;
+  isFanQueueOpen: boolean;
 
   // Actions
   fetchSongs: () => Promise<void>;
   refreshPointStatus: () => Promise<void>;
+  setFanQueueOpen: (open: boolean) => void;
   setFilter: <K extends FilterKey>(key: K, value: FilterState[K]) => void;
   resetFilters: () => void;
   setHighlighted: (id: number | null) => void;
@@ -71,6 +82,9 @@ export const useSongStore = create<SongStore>((set, get) => ({
 
   // 点歌状态：默认所有歌可点
   songPointStatus: {},
+  // 粉丝端点唱队列
+  fanQueue: [],
+  isFanQueueOpen: false,
 
   fetchSongs: async () => {
     set({ isLoading: true, loadError: null });
@@ -86,25 +100,29 @@ export const useSongStore = create<SongStore>((set, get) => ({
     }
   },
 
-  // 拉取所有点歌记录，计算每首歌的可点状态
+  // 拉取所有点歌记录，计算每首歌的可点状态 + 粉丝端可见的待唱队列
   // - pending 在队列中 → "歌曲在队列中"
   // - sung/deleted 后，created_at 之后又有 <5 条新记录 → "重复点歌"
   // - 否则可点
   refreshPointStatus: async () => {
     if (!isSupabaseConfigured) {
-      set({ songPointStatus: {} });
+      set({ songPointStatus: {}, fanQueue: [] });
       return;
     }
     try {
       const { data, error } = await supabase
         .from("song_requests")
-        .select("song_id,status,created_at")
+        .select("id,song_id,song_title,song_artist,status,order_index,created_at")
         .order("created_at", { ascending: true });
       if (error) throw error;
 
       const records = (data || []) as {
+        id: string;
         song_id: number;
+        song_title: string;
+        song_artist: string;
         status: "pending" | "sung" | "deleted";
+        order_index: number;
         created_at: string;
       }[];
 
@@ -149,12 +167,31 @@ export const useSongStore = create<SongStore>((set, get) => ({
         }
       }
 
-      set({ songPointStatus: statusMap });
+      // 粉丝端可见队列：只 pending，按 order_index 升序，再按 created_at 升序
+      const fanQueue = records
+        .filter((r) => r.status === "pending")
+        .sort((a, b) =>
+          a.order_index === b.order_index
+            ? a.created_at.localeCompare(b.created_at)
+            : a.order_index - b.order_index
+        )
+        .map((r) => ({
+          id: r.id,
+          song_id: r.song_id,
+          song_title: r.song_title,
+          song_artist: r.song_artist,
+          order_index: r.order_index,
+          created_at: r.created_at,
+        }));
+
+      set({ songPointStatus: statusMap, fanQueue });
     } catch (err) {
       console.warn("刷新点歌状态失败:", err);
-      set({ songPointStatus: {} });
+      set({ songPointStatus: {}, fanQueue: [] });
     }
   },
+
+  setFanQueueOpen: (open) => set({ isFanQueueOpen: open }),
 
   setFilter: (key, value) => set({ [key]: value } as Pick<SongStore, FilterKey>),
 
