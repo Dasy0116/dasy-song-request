@@ -200,6 +200,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ nickname: null });
       return;
     }
+    // 优先用 user_metadata.nickname（注册/修改昵称时同步写入，最可靠）
+    const metaNick =
+      (user.user_metadata as { nickname?: string } | null)?.nickname ||
+      undefined;
+
     try {
       const { data, error } = await supabase
         .from("profiles")
@@ -207,23 +212,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         .eq("id", user.id)
         .maybeSingle();
       if (error) throw error;
-      // 优先：profiles.nickname（注册时已写入真实昵称）
-      // 兜底1：user_metadata.nickname（注册时附带）
-      // 兜底2：email 前缀（老数据，base64url 编码，最后才用）
-      const metaNick =
-        (user.user_metadata as { nickname?: string } | null)?.nickname ||
-        undefined;
-      const nick =
-        (data as { nickname?: string } | null)?.nickname ||
-        metaNick ||
-        "粉丝";
+      // profiles.nickname 是真实昵称（updateNickname 时已更新）
+      // 但如果是刚注册的 base64url（触发器写入，upsert 未覆盖），用 user_metadata 兜底
+      const dbNick = (data as { nickname?: string } | null)?.nickname;
+      // 简单启发：如果 dbNick 看起来像 base64url（无中文且长度>20），用 metaNick
+      const looksLikeBase64 = dbNick && !/[\u4e00-\u9fa5]/.test(dbNick) && dbNick.length > 20;
+      const nick = looksLikeBase64 ? metaNick || dbNick : dbNick || metaNick || "粉丝";
       set({ nickname: nick });
     } catch (err) {
       console.warn("拉取昵称失败:", err);
-      const metaNick =
-        (user.user_metadata as { nickname?: string } | null)?.nickname ||
-        "粉丝";
-      set({ nickname: metaNick });
+      set({ nickname: metaNick || "粉丝" });
     }
   },
 
@@ -244,10 +242,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (existRow) throw new Error("这个昵称已被占用啦，换一个试试~");
 
     try {
+      // 1. 更新 profiles.nickname
       const { error } = await supabase
         .from("profiles")
         .upsert({ id: user.id, nickname: trimmed }, { onConflict: "id" });
       if (error) throw error;
+
+      // 2. 同步更新 user_metadata.nickname（fetchNickname 优先用这个）
+      const { error: authErr } = await supabase.auth.updateUser({
+        data: { nickname: trimmed },
+      });
+      if (authErr) {
+        console.warn("更新 user_metadata 失败（不影响 profiles）:", authErr);
+      }
+
       set({ nickname: trimmed });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "更新昵称失败";
