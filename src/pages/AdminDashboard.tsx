@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   ArrowUp,
@@ -13,6 +13,11 @@ import {
   Eye,
   EyeOff,
   Sparkles,
+  BarChart3,
+  TrendingUp,
+  Users,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useSongStore } from "@/store/useSongStore";
@@ -22,6 +27,17 @@ import { StarBackground } from "@/components/StarBackground";
 const ADMIN_PASSWORD = "Dasy0116";
 
 type Tab = "all" | "pending" | "sung";
+
+function startOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function formatDay(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getMonth() + 1}/${pad(d.getDate())}`;
+}
 
 function formatTime(iso: string) {
   try {
@@ -138,11 +154,83 @@ export default function AdminDashboard() {
   const [tab, setTab] = useState<Tab>("pending");
   const [keyword, setKeyword] = useState("");
   const [workingId, setWorkingId] = useState<string | null>(null);
+  const [statsOpen, setStatsOpen] = useState(false);
 
   const adminFetchRequests = useSongStore((s) => s.adminFetchRequests);
   const adminUpdateStatus = useSongStore((s) => s.adminUpdateStatus);
   const adminDelete = useSongStore((s) => s.adminDelete);
   const adminReorder = useSongStore((s) => s.adminReorder);
+
+  // 统计计算
+  const stats = useMemo(() => {
+    const now = new Date();
+    const todayStart = startOfDay(now).getTime();
+    let todayCount = 0;
+    let pendingCount = 0;
+    let sungCount = 0;
+    let deletedCount = 0;
+    const songCounter = new Map<number, { title: string; artist: string; count: number }>();
+    const userSet = new Set<string>();
+    const dayCounter = new Map<string, number>();
+
+    // 最近 7 天的日期键
+    const last7Days: { key: string; label: string; ts: number }[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = startOfDay(new Date(now.getTime() - i * 24 * 3600 * 1000));
+      last7Days.push({
+        key: d.toISOString().slice(0, 10),
+        label: formatDay(d),
+        ts: d.getTime(),
+      });
+      dayCounter.set(d.toISOString().slice(0, 10), 0);
+    }
+
+    for (const r of list) {
+      const created = new Date(r.created_at);
+      const createdTs = created.getTime();
+      if (createdTs >= todayStart) todayCount++;
+      if (r.status === "pending") pendingCount++;
+      else if (r.status === "sung") sungCount++;
+      else if (r.status === "deleted") deletedCount++;
+
+      if (r.nickname) userSet.add(r.nickname);
+
+      // 歌曲计数
+      const prev = songCounter.get(r.song_id);
+      if (prev) prev.count++;
+      else
+        songCounter.set(r.song_id, {
+          title: r.song_title,
+          artist: r.song_artist,
+          count: 1,
+        });
+
+      // 7 天分布
+      const dayKey = startOfDay(created).toISOString().slice(0, 10);
+      if (dayCounter.has(dayKey)) {
+        dayCounter.set(dayKey, (dayCounter.get(dayKey) || 0) + 1);
+      }
+    }
+
+    const topSongs = Array.from(songCounter.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    const maxDayCount = Math.max(1, ...Array.from(dayCounter.values()));
+
+    return {
+      total: list.length,
+      today: todayCount,
+      pending: pendingCount,
+      sung: sungCount,
+      deleted: deletedCount,
+      uniqueUsers: userSet.size,
+      topSongs,
+      last7Days,
+      dayCounts: last7Days.map((d) => dayCounter.get(d.key) || 0),
+      maxDayCount,
+    };
+  }, [list]);
 
   const load = async () => {
     setLoading(true);
@@ -193,9 +281,6 @@ export default function AdminDashboard() {
     }
     return true;
   });
-
-  const pendingCount = list.filter((r) => r.status === "pending").length;
-  const sungCount = list.filter((r) => r.status === "sung").length;
 
   const setStatus = async (id: string, status: SongRequest["status"]) => {
     setWorkingId(id);
@@ -269,26 +354,137 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* 统计卡片 */}
-        <div className="grid grid-cols-3 gap-3 mb-6">
+        {/* 统计卡片：核心数字 */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           <div className="glass-card p-4">
-            <div className="flex items-center gap-2 text-xs text-white/50 mb-1">
-              <ListOrdered className="w-3.5 h-3.5" /> 总数
+            <div className="flex items-center gap-1.5 text-xs text-white/50 mb-1">
+              <ListOrdered className="w-3.5 h-3.5" /> 总点歌
             </div>
-            <div className="font-display text-3xl text-white">{list.length}</div>
+            <div className="font-display text-3xl text-white">{stats.total}</div>
           </div>
           <div className="glass-card p-4 border-accent-gold/40">
-            <div className="flex items-center gap-2 text-xs text-accent-gold mb-1">
+            <div className="flex items-center gap-1.5 text-xs text-accent-gold mb-1">
               <Clock className="w-3.5 h-3.5" /> 待唱
             </div>
-            <div className="font-display text-3xl text-accent-gold">{pendingCount}</div>
+            <div className="font-display text-3xl text-accent-gold">{stats.pending}</div>
           </div>
           <div className="glass-card p-4 border-emerald-400/30">
-            <div className="flex items-center gap-2 text-xs text-emerald-300 mb-1">
+            <div className="flex items-center gap-1.5 text-xs text-emerald-300 mb-1">
               <Mic2 className="w-3.5 h-3.5" /> 已唱
             </div>
-            <div className="font-display text-3xl text-emerald-300">{sungCount}</div>
+            <div className="font-display text-3xl text-emerald-300">{stats.sung}</div>
           </div>
+          <div className="glass-card p-4 border-accent-violet/30">
+            <div className="flex items-center gap-1.5 text-xs text-accent-violet mb-1">
+              <Users className="w-3.5 h-3.5" /> 独立粉丝
+            </div>
+            <div className="font-display text-3xl text-accent-violet">
+              {stats.uniqueUsers}
+            </div>
+          </div>
+        </div>
+
+        {/* 详细统计：可折叠 */}
+        <div className="glass-card mb-6 overflow-hidden">
+          <button
+            onClick={() => setStatsOpen((v) => !v)}
+            className="w-full px-5 py-3 flex items-center justify-between hover:bg-white/[0.04] transition"
+          >
+            <span className="inline-flex items-center gap-2 text-sm text-white/80">
+              <BarChart3 className="w-4 h-4 text-accent-gold" />
+              详细统计
+              <span className="text-xs text-white/40">
+                · 今日 {stats.today} · 已删 {stats.deleted}
+              </span>
+            </span>
+            {statsOpen ? (
+              <ChevronUp className="w-4 h-4 text-white/60" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-white/60" />
+            )}
+          </button>
+
+          {statsOpen && (
+            <div className="px-5 pb-5 pt-1 grid md:grid-cols-2 gap-5 border-t border-white/5">
+              {/* 7 天趋势 */}
+              <div>
+                <h4 className="text-xs text-white/60 mb-3 flex items-center gap-1.5">
+                  <TrendingUp className="w-3.5 h-3.5" /> 最近 7 天点歌分布
+                </h4>
+                <div className="flex items-end justify-between gap-2 h-32">
+                  {stats.last7Days.map((d, i) => {
+                    const count = stats.dayCounts[i];
+                    const h = Math.max(
+                      4,
+                      Math.round((count / stats.maxDayCount) * 100)
+                    );
+                    return (
+                      <div
+                        key={d.key}
+                        className="flex-1 flex flex-col items-center gap-1"
+                        title={`${d.label}: ${count} 首`}
+                      >
+                        <span className="text-[10px] text-white/60">
+                          {count > 0 ? count : ""}
+                        </span>
+                        <div
+                          className="w-full rounded-t bg-gradient-to-t from-accent-violet/40 to-accent-gold/70 transition-all"
+                          style={{ height: `${h}%` }}
+                        />
+                        <span className="text-[10px] text-white/40">{d.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Top 5 热门歌曲 */}
+              <div>
+                <h4 className="text-xs text-white/60 mb-3 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" /> Top 5 热门歌曲
+                </h4>
+                {stats.topSongs.length === 0 ? (
+                  <p className="text-xs text-white/40 py-4 text-center">
+                    暂无点歌数据
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {stats.topSongs.map((s, i) => (
+                      <div
+                        key={i}
+                        className="flex items-center gap-3"
+                      >
+                        <span
+                          className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold ${
+                            i === 0
+                              ? "bg-accent-gold text-wolf-900"
+                              : i === 1
+                              ? "bg-white/30 text-white"
+                              : i === 2
+                              ? "bg-amber-700/60 text-amber-100"
+                              : "bg-white/5 text-white/60"
+                          }`}
+                        >
+                          {i + 1}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm text-white truncate">
+                            {s.title}
+                          </p>
+                          <p className="text-[10px] text-white/40 truncate">
+                            {s.artist}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-xs text-accent-gold font-mono">
+                          ×{s.count}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Tab + 搜索 */}
@@ -296,9 +492,9 @@ export default function AdminDashboard() {
           <div className="flex bg-white/5 rounded-xl p-1 border border-white/10">
             {(
               [
-                { key: "pending", label: `待唱 ${pendingCount}` },
-                { key: "all", label: `全部 ${list.length}` },
-                { key: "sung", label: `已唱 ${sungCount}` },
+                { key: "pending", label: `待唱 ${stats.pending}` },
+                { key: "all", label: `全部 ${stats.total}` },
+                { key: "sung", label: `已唱 ${stats.sung}` },
               ] as { key: Tab; label: string }[]
             ).map((t) => (
               <button

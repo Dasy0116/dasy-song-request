@@ -8,19 +8,22 @@ import { RequestModal } from "@/components/RequestModal";
 import { SuccessToast } from "@/components/SuccessToast";
 import { NicknameModal } from "@/components/NicknameModal";
 import { FanQueuePanel, FanQueueTrigger } from "@/components/FanQueuePanel";
+import { MyHistoryPanel, MyHistoryTrigger } from "@/components/MyHistoryPanel";
 import { useSongStore } from "@/store/useSongStore";
 import { useUserStore } from "@/store/useUserStore";
 
 export default function Home() {
   const fetchSongs = useSongStore((s) => s.fetchSongs);
   const refreshPointStatus = useSongStore((s) => s.refreshPointStatus);
+  const hydrateMyHistory = useSongStore((s) => s.hydrateMyHistory);
   const hydrate = useUserStore((s) => s.hydrate);
 
   useEffect(() => {
     fetchSongs();
     refreshPointStatus();
+    hydrateMyHistory();
     hydrate();
-  }, [fetchSongs, refreshPointStatus, hydrate]);
+  }, [fetchSongs, refreshPointStatus, hydrateMyHistory, hydrate]);
 
   return (
     <div className="relative min-h-screen overflow-x-hidden">
@@ -55,8 +58,13 @@ export default function Home() {
       {/* 弹窗 & Toast */}
       <RequestModal />
       <NicknameModal />
-      <FanQueueTrigger />
+      {/* 左上角浮层按钮组 */}
+      <div className="fixed top-4 left-4 z-40 flex items-center gap-2">
+        <FanQueueTrigger />
+        <MyHistoryTrigger />
+      </div>
       <FanQueuePanel />
+      <MyHistoryPanel />
       <SuccessToast />
     </div>
   );

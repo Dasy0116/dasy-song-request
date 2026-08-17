@@ -133,7 +133,7 @@ export function FanQueuePanel() {
 }
 
 /**
- * 触发按钮（带未唱数量徽标）
+ * 触发按钮（不带 fixed 定位，由父容器统一布局）
  */
 export function FanQueueTrigger() {
   const setOpen = useSongStore((s) => s.setFanQueueOpen);
@@ -142,7 +142,7 @@ export function FanQueueTrigger() {
   return (
     <button
       onClick={() => setOpen(true)}
-      className="fixed top-4 left-4 z-40 glass-card px-3 py-2 flex items-center gap-1.5 text-xs text-white/80 hover:text-white hover:bg-white/10 transition-all"
+      className="glass-card px-3 py-2 flex items-center gap-1.5 text-xs text-white/80 hover:text-white hover:bg-white/10 transition-all"
       title="查看点唱队列"
     >
       <ListMusic className="w-3.5 h-3.5 text-accent-gold" />

@@ -2,6 +2,19 @@ import { create } from "zustand";
 import type { Song, SongRequest, FilterKey, FilterState } from "@/types";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 
+const MY_HISTORY_KEY = "dasy_my_history";
+const MY_HISTORY_MAX = 50;
+
+export interface MyHistoryItem {
+  local_id: string;
+  song_id: number;
+  song_title: string;
+  song_artist: string;
+  nickname: string;
+  message: string;
+  created_at: string;
+}
+
 interface SongStore extends FilterState {
   // 歌曲数据
   allSongs: Song[];
@@ -31,11 +44,21 @@ interface SongStore extends FilterState {
     created_at: string;
   }>;
   isFanQueueOpen: boolean;
+  // 本设备点歌历史（localStorage 持久化）
+  myHistory: MyHistoryItem[];
+  isMyHistoryOpen: boolean;
+  // 打开"我的点歌"时，对每条历史查询 Supabase 最新状态的结果
+  myHistoryStatus: Record<string, "pending" | "sung" | "deleted" | "unknown">;
 
   // Actions
   fetchSongs: () => Promise<void>;
   refreshPointStatus: () => Promise<void>;
   setFanQueueOpen: (open: boolean) => void;
+  hydrateMyHistory: () => void;
+  addMyHistory: (item: Omit<MyHistoryItem, "local_id" | "created_at">) => void;
+  removeMyHistory: (local_id: string) => void;
+  setMyHistoryOpen: (open: boolean) => void;
+  refreshMyHistoryStatus: () => Promise<void>;
   setFilter: <K extends FilterKey>(key: K, value: FilterState[K]) => void;
   resetFilters: () => void;
   setHighlighted: (id: number | null) => void;
@@ -85,6 +108,10 @@ export const useSongStore = create<SongStore>((set, get) => ({
   // 粉丝端点唱队列
   fanQueue: [],
   isFanQueueOpen: false,
+  // 我的点歌历史
+  myHistory: [],
+  isMyHistoryOpen: false,
+  myHistoryStatus: {},
 
   fetchSongs: async () => {
     set({ isLoading: true, loadError: null });
@@ -193,6 +220,93 @@ export const useSongStore = create<SongStore>((set, get) => ({
 
   setFanQueueOpen: (open) => set({ isFanQueueOpen: open }),
 
+  // ============ 我的点歌历史（本地） ============
+  hydrateMyHistory: () => {
+    if (get().myHistory.length > 0) return;
+    try {
+      const raw = localStorage.getItem(MY_HISTORY_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw) as MyHistoryItem[];
+        if (Array.isArray(arr)) set({ myHistory: arr });
+      }
+    } catch {
+      // 解析失败忽略
+    }
+  },
+
+  addMyHistory: (item) => {
+    const full: MyHistoryItem = {
+      ...item,
+      local_id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      created_at: new Date().toISOString(),
+    };
+    const next = [full, ...get().myHistory].slice(0, MY_HISTORY_MAX);
+    set({ myHistory: next });
+    try {
+      localStorage.setItem(MY_HISTORY_KEY, JSON.stringify(next));
+    } catch {}
+  },
+
+  removeMyHistory: (local_id) => {
+    const next = get().myHistory.filter((x) => x.local_id !== local_id);
+    set({ myHistory: next });
+    try {
+      localStorage.setItem(MY_HISTORY_KEY, JSON.stringify(next));
+    } catch {}
+  },
+
+  setMyHistoryOpen: (open) => set({ isMyHistoryOpen: open }),
+
+  // 查询 myHistory 中每条记录对应 Supabase 最新状态
+  refreshMyHistoryStatus: async () => {
+    const { myHistory } = get();
+    if (!isSupabaseConfigured || myHistory.length === 0) {
+      set({ myHistoryStatus: {} });
+      return;
+    }
+    try {
+      // 一次性查询所有相关 song_id 的全部记录，前端分组取最新
+      const songIds = Array.from(new Set(myHistory.map((h) => h.song_id)));
+      const { data, error } = await supabase
+        .from("song_requests")
+        .select("song_id,status,created_at")
+        .in("song_id", songIds)
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+
+      const records = (data || []) as {
+        song_id: number;
+        status: "pending" | "sung" | "deleted";
+        created_at: string;
+      }[];
+
+      // 对每个 song_id 取 created_at 最大的那条
+      const latestBySong = new Map<number, { status: string; created_at: string }>();
+      for (const r of records) {
+        const prev = latestBySong.get(r.song_id);
+        if (!prev || r.created_at > prev.created_at) {
+          latestBySong.set(r.song_id, { status: r.status, created_at: r.created_at });
+        }
+      }
+
+      // 对每条 myHistory 项，如果它创建时间 <= Supabase 中该 song_id 最新记录的创建时间，
+      // 用 Supabase 的最新状态；否则说明这条本地记录可能没提交成功，标记为 unknown
+      const statusMap: Record<string, "pending" | "sung" | "deleted" | "unknown"> = {};
+      for (const h of myHistory) {
+        const latest = latestBySong.get(h.song_id);
+        if (latest && latest.created_at >= h.created_at) {
+          statusMap[h.local_id] = latest.status as "pending" | "sung" | "deleted";
+        } else {
+          statusMap[h.local_id] = "unknown";
+        }
+      }
+      set({ myHistoryStatus: statusMap });
+    } catch (err) {
+      console.warn("刷新我的历史状态失败:", err);
+      set({ myHistoryStatus: {} });
+    }
+  },
+
   setFilter: (key, value) => set({ [key]: value } as Pick<SongStore, FilterKey>),
 
   resetFilters: () =>
@@ -264,6 +378,14 @@ export const useSongStore = create<SongStore>((set, get) => ({
         successToast: `🐺 点歌成功！已为「${nickname}」登记《${selectedSong.title}》`,
       });
       setTimeout(() => set({ successToast: null }), 4000);
+      // 写入本地"我的点歌"历史
+      get().addMyHistory({
+        song_id: selectedSong.id,
+        song_title: selectedSong.title,
+        song_artist: selectedSong.artist,
+        nickname,
+        message,
+      });
       // 提交成功后刷新点歌状态（这首歌进入队列）
       get().refreshPointStatus();
     } catch (err) {
