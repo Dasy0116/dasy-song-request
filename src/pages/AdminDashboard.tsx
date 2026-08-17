@@ -20,6 +20,11 @@ import {
   ChevronUp,
   Radio,
   Loader2,
+  Square,
+  CheckSquare,
+  Minus,
+  SquareCheckBig,
+  XCircle,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useSongStore } from "@/store/useSongStore";
@@ -157,6 +162,10 @@ export default function AdminDashboard() {
   const [keyword, setKeyword] = useState("");
   const [workingId, setWorkingId] = useState<string | null>(null);
   const [statsOpen, setStatsOpen] = useState(false);
+  // 多选
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkWorking, setBulkWorking] = useState(false);
+  const [bulkWorkingCount, setBulkWorkingCount] = useState(0);
 
   const adminFetchRequests = useSongStore((s) => s.adminFetchRequests);
   const adminUpdateStatus = useSongStore((s) => s.adminUpdateStatus);
@@ -328,6 +337,106 @@ export default function AdminDashboard() {
       await load();
     } finally {
       setWorkingId(null);
+    }
+  };
+
+  // ========== 多选 & 批量操作 ==========
+  // 切换 Tab 或搜索关键词变化时自动清空已选（避免选了"待唱"里的记录，切到"已唱"后还带着）
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [tab, keyword]);
+
+  const filteredIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
+  const filteredIdSet = useMemo(() => new Set(filteredIds), [filteredIds]);
+
+  // 当前过滤结果里「全选」的三态
+  const selectedInFiltered = useMemo(() => {
+    let count = 0;
+    for (const id of filteredIds) if (selectedIds.has(id)) count++;
+    return {
+      count,
+      total: filteredIds.length,
+      all: filteredIds.length > 0 && count === filteredIds.length,
+      some: count > 0,
+    };
+  }, [filteredIds, selectedIds]);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllInFiltered = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (selectedInFiltered.all) {
+        // 全部取消（只取消当前 filtered 的）
+        for (const id of filteredIds) next.delete(id);
+      } else {
+        // 全部选中（合并 filtered）
+        for (const id of filteredIds) next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  // 获取真正要处理的 id（只保留 selected 中存在于 list 中的）
+  const validSelectedIds = useMemo(() => {
+    const listIdSet = new Set(list.map((r) => r.id));
+    return Array.from(selectedIds).filter((id) => listIdSet.has(id));
+  }, [selectedIds, list]);
+
+  // 按目标操作筛选可操作的记录（避免将已删除的恢复成 sung 等非法操作）
+  function filterByOperation(
+    ids: string[],
+    target: "sung" | "pending" | "delete"
+  ) {
+    return ids.filter((id) => {
+      const r = list.find((x) => x.id === id);
+      if (!r) return false;
+      if (target === "delete") return true; // 都可删
+      if (target === "sung") return r.status !== "sung"; // 没唱过的标已唱
+      if (target === "pending") return r.status === "sung"; // 只有已唱能恢复待唱
+      return false;
+    });
+  }
+
+  const bulkOperation = async (
+    target: "sung" | "pending" | "delete",
+    confirmText: string
+  ) => {
+    if (validSelectedIds.length === 0) return;
+    const operableIds = filterByOperation(validSelectedIds, target);
+    if (operableIds.length === 0) {
+      alert("选中的记录里没有符合当前操作条件的条目");
+      return;
+    }
+    if (!confirm(`${confirmText}\n共 ${operableIds.length} 条？`)) return;
+
+    setBulkWorking(true);
+    setBulkWorkingCount(0);
+    try {
+      let done = 0;
+      // 串行执行，控制并发
+      for (const id of operableIds) {
+        try {
+          if (target === "delete") await adminDelete(id);
+          else await adminUpdateStatus(id, target);
+        } catch {}
+        done++;
+        setBulkWorkingCount(done);
+      }
+      clearSelection();
+      await load();
+    } finally {
+      setBulkWorking(false);
+      setBulkWorkingCount(0);
     }
   };
 
@@ -558,6 +667,105 @@ export default function AdminDashboard() {
           </div>
         </div>
 
+        {/* 批量操作工具栏 */}
+        <div
+          className={`mb-4 glass-card p-3 flex flex-wrap items-center gap-3 border transition-all ${
+            selectedInFiltered.some
+              ? "border-accent-gold/40 shadow-[0_0_24px_rgba(251,191,36,0.1)]"
+              : "border-white/10"
+          }`}
+        >
+          {/* 全选 / 反选 */}
+          <button
+            onClick={toggleSelectAllInFiltered}
+            disabled={bulkWorking || filtered.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-40 transition-all"
+            title={selectedInFiltered.all ? "取消全选" : "全选当前筛选结果"}
+          >
+            {selectedInFiltered.all ? (
+              <CheckSquare className="w-4 h-4 text-accent-gold" />
+            ) : selectedInFiltered.some ? (
+              <div className="w-4 h-4 relative flex items-center justify-center">
+                <Square className="w-4 h-4 text-accent-gold" />
+                <Minus className="w-2.5 h-2.5 text-accent-gold absolute" />
+              </div>
+            ) : (
+              <Square className="w-4 h-4" />
+            )}
+            {selectedInFiltered.all ? "取消全选" : "全选当前"}
+          </button>
+
+          {/* 选中计数 */}
+          <div className="text-xs text-white/60">
+            已选{" "}
+            <span className="text-accent-gold font-semibold">
+              {selectedInFiltered.count}
+            </span>{" "}
+            / {selectedInFiltered.total}
+            {bulkWorking && (
+              <span className="ml-2 text-white/40">
+                处理中 {bulkWorkingCount}/
+                {filterByOperation(validSelectedIds, "delete").length ||
+                  filterByOperation(validSelectedIds, "sung").length ||
+                  filterByOperation(validSelectedIds, "pending").length ||
+                  validSelectedIds.length}
+              </span>
+            )}
+          </div>
+
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {/* 清除选择 */}
+            <button
+              onClick={clearSelection}
+              disabled={bulkWorking || validSelectedIds.length === 0}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-all"
+            >
+              <XCircle className="w-3.5 h-3.5" />
+              清除
+            </button>
+
+            {/* 待唱 Tab：标已唱 + 删除；all：标已唱 + 恢复 + 删除；sung：恢复 + 删除 */}
+            {tab !== "sung" && (
+              <button
+                onClick={() =>
+                  bulkOperation("sung", "确定将选中条目标记为已唱？")
+                }
+                disabled={bulkWorking || validSelectedIds.length === 0}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 hover:bg-emerald-500/30 disabled:opacity-40 transition-all"
+              >
+                {bulkWorking ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Check className="w-3.5 h-3.5" />
+                )}
+                批量标记已唱
+              </button>
+            )}
+
+            {tab !== "pending" && (
+              <button
+                onClick={() =>
+                  bulkOperation("pending", "确定将选中条目恢复为待唱？")
+                }
+                disabled={bulkWorking || validSelectedIds.length === 0}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-accent-gold/20 border border-accent-gold/50 text-accent-gold hover:bg-accent-gold/30 disabled:opacity-40 transition-all"
+              >
+                <Clock className="w-3.5 h-3.5" />
+                批量恢复待唱
+              </button>
+            )}
+
+            <button
+              onClick={() => bulkOperation("delete", "确定将选中条目删除？删除后不可恢复！")}
+              disabled={bulkWorking || validSelectedIds.length === 0}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-red-500/15 border border-red-400/40 text-red-300 hover:bg-red-500/25 disabled:opacity-40 transition-all"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              批量删除
+            </button>
+          </div>
+        </div>
+
         {/* 错误提示 */}
         {err && (
           <div className="mb-4 p-3 rounded-xl border border-red-400/40 bg-red-400/10 text-red-300 text-sm">
@@ -582,31 +790,52 @@ export default function AdminDashboard() {
           </div>
         ) : (
           <div className="space-y-3">
-            {filtered.map((r, i) => (
-              <div
-                key={r.id}
-                id={`req-${r.id}`}
-                className={`glass-card p-4 md:p-5 flex flex-col md:flex-row md:items-center gap-4 transition-all hover:shadow-[0_0_30px_rgba(139,92,246,0.2)] ${
-                  r.status === "sung" ? "opacity-60" : ""
-                } ${workingId === r.id ? "pointer-events-none opacity-70" : ""}`}
-              >
-                {/* 序号 + 上下 */}
-                <div className="flex md:flex-col items-center md:items-stretch gap-2 md:gap-1 md:w-16 shrink-0">
-                  <div className="font-display text-2xl text-gradient-gold w-10 text-center md:w-auto">
-                    {String(i + 1).padStart(2, "0")}
-                  </div>
-                  <div className="flex md:flex-col gap-1">
+            {filtered.map((r, i) => {
+              const checked = selectedIds.has(r.id);
+              const rowDisabled =
+                workingId === r.id || (bulkWorking && validSelectedIds.includes(r.id));
+              return (
+                <div
+                  key={r.id}
+                  id={`req-${r.id}`}
+                  className={`glass-card p-4 md:p-5 flex flex-col md:flex-row md:items-center gap-4 transition-all hover:shadow-[0_0_30px_rgba(139,92,246,0.2)] ${
+                    r.status === "sung" ? "opacity-60" : ""
+                  } ${rowDisabled ? "pointer-events-none opacity-70" : ""} ${
+                    checked ? "ring-2 ring-accent-gold/50" : ""
+                  }`}
+                >
+                  {/* 复选框 + 序号 + 上下 */}
+                  <div className="flex md:flex-col items-center md:items-stretch gap-2 md:gap-1 shrink-0">
+                    {/* 复选框 */}
                     <button
-                      onClick={() => reorder(r.id, "up")}
-                      disabled={i === 0}
-                      className="p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-20 disabled:cursor-not-allowed"
-                      title="上移"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleSelect(r.id);
+                      }}
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-all shrink-0"
+                      title={checked ? "取消选中" : "选中"}
                     >
-                      <ArrowUp className="w-4 h-4" />
+                      {checked ? (
+                        <SquareCheckBig className="w-5 h-5 text-accent-gold" />
+                      ) : (
+                        <Square className="w-5 h-5" />
+                      )}
                     </button>
-                    <button
-                      onClick={() => reorder(r.id, "down")}
-                      disabled={i === filtered.length - 1}
+                    <div className="font-display text-2xl text-gradient-gold w-10 text-center md:w-auto">
+                      {String(i + 1).padStart(2, "0")}
+                    </div>
+                    <div className="flex md:flex-col gap-1">
+                      <button
+                        onClick={() => reorder(r.id, "up")}
+                        disabled={i === 0}
+                        className="p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-20 disabled:cursor-not-allowed"
+                        title="上移"
+                      >
+                        <ArrowUp className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => reorder(r.id, "down")}
+                        disabled={i === filtered.length - 1}
                       className="p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-20 disabled:cursor-not-allowed"
                       title="下移"
                     >
@@ -670,7 +899,8 @@ export default function AdminDashboard() {
                   </button>
                 </div>
               </div>
-            ))}
+            );
+            })}
           </div>
         )}
 
