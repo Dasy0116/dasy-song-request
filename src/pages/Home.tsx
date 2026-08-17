@@ -6,14 +6,18 @@ import { SongTable } from "@/components/SongTable";
 import { SongCard } from "@/components/SongCard";
 import { RequestModal } from "@/components/RequestModal";
 import { SuccessToast } from "@/components/SuccessToast";
+import { NicknameModal } from "@/components/NicknameModal";
 import { useSongStore } from "@/store/useSongStore";
+import { useUserStore } from "@/store/useUserStore";
 
 export default function Home() {
   const fetchSongs = useSongStore((s) => s.fetchSongs);
+  const hydrate = useUserStore((s) => s.hydrate);
 
   useEffect(() => {
     fetchSongs();
-  }, [fetchSongs]);
+    hydrate();
+  }, [fetchSongs, hydrate]);
 
   return (
     <div className="relative min-h-screen overflow-x-hidden">
@@ -47,6 +51,7 @@ export default function Home() {
 
       {/* 弹窗 & Toast */}
       <RequestModal />
+      <NicknameModal />
       <SuccessToast />
     </div>
   );

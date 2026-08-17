@@ -1,8 +1,11 @@
-import { Home, Radio } from "lucide-react";
+import { Home, Radio, UserCog } from "lucide-react";
 import { useSongStore } from "@/store/useSongStore";
+import { useUserStore } from "@/store/useUserStore";
 
 export function AvatarHero() {
   const resetFilters = useSongStore((s) => s.resetFilters);
+  const nickname = useUserStore((s) => s.nickname);
+  const openEdit = useUserStore((s) => s.openEdit);
 
   return (
     <section
@@ -10,6 +13,22 @@ export function AvatarHero() {
       onClick={resetFilters}
       role="banner"
     >
+      {/* 右上角：昵称/修改入口 */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          openEdit();
+        }}
+        className="fixed top-4 right-4 z-40 glass-card px-3 py-2 flex items-center gap-1.5 text-xs text-white/80 hover:text-white hover:bg-white/10 transition-all"
+        title="设置或修改昵称"
+      >
+        <UserCog className="w-3.5 h-3.5 text-accent-gold" />
+        {nickname ? (
+          <span className="max-w-[120px] truncate">{nickname}</span>
+        ) : (
+          <span className="text-white/50">设置昵称</span>
+        )}
+      </button>
       {/* 装饰性光晕 */}
       <div className="absolute top-10 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-accent-violet/20 blur-[120px] rounded-full pointer-events-none" />
       <div className="absolute top-20 right-[20%] w-64 h-64 bg-accent-blue/15 blur-[80px] rounded-full pointer-events-none" />

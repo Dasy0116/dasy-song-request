@@ -10,6 +10,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { useSongStore } from "@/store/useSongStore";
+import { useUserStore } from "@/store/useUserStore";
 
 export function RequestModal() {
   const isOpen = useSongStore((s) => s.isRequestModalOpen);
@@ -19,18 +20,20 @@ export function RequestModal() {
   const submitting = useSongStore((s) => s.submittingRequest);
   const errorToast = useSongStore((s) => s.errorToast);
 
+  const savedNickname = useUserStore((s) => s.nickname);
+
   const [nickname, setNickname] = useState("");
   const [message, setMessage] = useState("");
   const [errors, setErrors] = useState<{ nickname?: string }>({});
 
-  // 重置表单当弹窗开启
+  // 弹窗开启时用已保存的昵称预填
   useEffect(() => {
     if (isOpen) {
-      setNickname("");
+      setNickname(savedNickname);
       setMessage("");
       setErrors({});
     }
-  }, [isOpen]);
+  }, [isOpen, savedNickname]);
 
   // ESC关闭
   useEffect(() => {
@@ -50,6 +53,10 @@ export function RequestModal() {
     if (!trimmedNick) {
       setErrors({ nickname: "请先填写你的昵称呀~" });
       return;
+    }
+    // 同步保存昵称，下次自动带上
+    if (trimmedNick !== savedNickname) {
+      useUserStore.getState().setNickname(trimmedNick);
     }
     await submitRequest({
       nickname: trimmedNick,
