@@ -19,9 +19,12 @@ interface SongStore extends FilterState {
   errorToast: string | null;
   // 提交中
   submittingRequest: boolean;
+  // 每首歌的点歌可点状态：{ [songId]: { disabled, reason? } }
+  songPointStatus: Record<number, { disabled: boolean; reason?: string }>;
 
   // Actions
   fetchSongs: () => Promise<void>;
+  refreshPointStatus: () => Promise<void>;
   setFilter: <K extends FilterKey>(key: K, value: FilterState[K]) => void;
   resetFilters: () => void;
   setHighlighted: (id: number | null) => void;
@@ -66,6 +69,9 @@ export const useSongStore = create<SongStore>((set, get) => ({
   errorToast: null,
   submittingRequest: false,
 
+  // 点歌状态：默认所有歌可点
+  songPointStatus: {},
+
   fetchSongs: async () => {
     set({ isLoading: true, loadError: null });
     try {
@@ -77,6 +83,76 @@ export const useSongStore = create<SongStore>((set, get) => ({
     } catch (err) {
       const msg = err instanceof Error ? err.message : "未知错误";
       set({ isLoading: false, loadError: `歌单加载失败: ${msg}` });
+    }
+  },
+
+  // 拉取所有点歌记录，计算每首歌的可点状态
+  // - pending 在队列中 → "歌曲在队列中"
+  // - sung/deleted 后，created_at 之后又有 <5 条新记录 → "重复点歌"
+  // - 否则可点
+  refreshPointStatus: async () => {
+    if (!isSupabaseConfigured) {
+      set({ songPointStatus: {} });
+      return;
+    }
+    try {
+      const { data, error } = await supabase
+        .from("song_requests")
+        .select("song_id,status,created_at")
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+
+      const records = (data || []) as {
+        song_id: number;
+        status: "pending" | "sung" | "deleted";
+        created_at: string;
+      }[];
+
+      // 按歌曲分组，找每首歌最新的一条记录
+      const latestBySong = new Map<
+        number,
+        { status: string; created_at: string }
+      >();
+      for (const r of records) {
+        const prev = latestBySong.get(r.song_id);
+        if (!prev || r.created_at > prev.created_at) {
+          latestBySong.set(r.song_id, {
+            status: r.status,
+            created_at: r.created_at,
+          });
+        }
+      }
+
+      const statusMap: Record<
+        number,
+        { disabled: boolean; reason?: string }
+      > = {};
+
+      for (const [songId, latest] of latestBySong.entries()) {
+        if (latest.status === "pending") {
+          statusMap[songId] = {
+            disabled: true,
+            reason: "歌曲已在点歌队列中",
+          };
+        } else {
+          // sung 或 deleted：数 created_at 之后有多少条记录
+          const laterCount = records.filter(
+            (r) => r.created_at > latest.created_at
+          ).length;
+          if (laterCount < 5) {
+            statusMap[songId] = {
+              disabled: true,
+              reason: "重复点歌（刚被点过，再等等~）",
+            };
+          }
+          // 否则可点，不写入 map
+        }
+      }
+
+      set({ songPointStatus: statusMap });
+    } catch (err) {
+      console.warn("刷新点歌状态失败:", err);
+      set({ songPointStatus: {} });
     }
   },
 
@@ -108,8 +184,11 @@ export const useSongStore = create<SongStore>((set, get) => ({
     setTimeout(() => set({ highlightedSongId: null }), 2000);
   },
 
-  openRequestModal: (song) =>
-    set({ selectedSong: song, isRequestModalOpen: true }),
+  openRequestModal: (song) => {
+    set({ selectedSong: song, isRequestModalOpen: true });
+    // 异步刷新点歌状态（不阻塞弹窗打开），让按钮状态保持较新
+    get().refreshPointStatus();
+  },
 
   closeRequestModal: () =>
     set({ isRequestModalOpen: false, selectedSong: null }),
@@ -148,6 +227,8 @@ export const useSongStore = create<SongStore>((set, get) => ({
         successToast: `🐺 点歌成功！已为「${nickname}」登记《${selectedSong.title}》`,
       });
       setTimeout(() => set({ successToast: null }), 4000);
+      // 提交成功后刷新点歌状态（这首歌进入队列）
+      get().refreshPointStatus();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "未知错误";
       console.error(err);

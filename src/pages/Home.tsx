@@ -12,12 +12,14 @@ import { useUserStore } from "@/store/useUserStore";
 
 export default function Home() {
   const fetchSongs = useSongStore((s) => s.fetchSongs);
+  const refreshPointStatus = useSongStore((s) => s.refreshPointStatus);
   const hydrate = useUserStore((s) => s.hydrate);
 
   useEffect(() => {
     fetchSongs();
+    refreshPointStatus();
     hydrate();
-  }, [fetchSongs, hydrate]);
+  }, [fetchSongs, refreshPointStatus, hydrate]);
 
   return (
     <div className="relative min-h-screen overflow-x-hidden">

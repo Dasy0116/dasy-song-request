@@ -37,9 +37,17 @@ interface CardProps {
 function MobileSongCard({ song, index }: CardProps) {
   const highlightedSongId = useSongStore((s) => s.highlightedSongId);
   const openRequestModal = useSongStore((s) => s.openRequestModal);
+  const pointStatus = useSongStore((s) => s.songPointStatus[song.id]);
 
   const isHighlighted = highlightedSongId === song.id;
   const isDisabled = song.status !== "available";
+  const pointBlocked = !!pointStatus?.disabled;
+  const buttonDisabled = isDisabled || pointBlocked;
+  const buttonTitle = isDisabled
+    ? "当前歌曲不可点"
+    : pointBlocked
+    ? pointStatus?.reason
+    : "点这首歌";
   const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -121,10 +129,11 @@ function MobileSongCard({ song, index }: CardProps) {
         </div>
         <button
           onClick={() => openRequestModal(song)}
-          disabled={isDisabled}
+          disabled={buttonDisabled}
+          title={buttonTitle}
           className={`
             inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium transition-all
-            ${isDisabled
+            ${buttonDisabled
               ? "bg-white/5 text-white/40 cursor-not-allowed"
               : "bg-gold-glow text-wolf-900 hover:shadow-glow-gold hover:scale-105 active:scale-95"}
           `}
